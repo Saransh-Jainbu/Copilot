@@ -1,0 +1,17 @@
+# Render Deployment Configuration
+# See: https://render.com/docs/yaml-spec
+
+services:
+  - type: web
+    name: devops-copilot-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: HUGGINGFACE_API_TOKEN
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: APP_ENV
+        value: production
+    healthCheckPath: /api/health
+    plan: free

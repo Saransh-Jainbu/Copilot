@@ -1,0 +1,78 @@
+# DevOps Copilot - Central Configuration
+# ========================================
+
+app:
+  name: "DevOps Copilot"
+  version: "0.1.0"
+  debug: false
+
+# --- Edge Layer ---
+edge:
+  parser:
+    max_context_lines: 50          # Lines of context around error
+    max_log_size_mb: 10            # Max log file size to process
+  classifier:
+    model_name: "distilbert-base-uncased"
+    categories:
+      - dependency_error
+      - syntax_error
+      - env_mismatch
+      - build_failure
+      - test_failure
+      - timeout
+      - permission_error
+      - unknown
+    confidence_threshold: 0.6
+
+# --- Fog Layer ---
+fog:
+  embeddings:
+    model_name: "sentence-transformers/all-MiniLM-L6-v2"
+    batch_size: 64
+    dimension: 384
+  vector_store:
+    index_path: "data/faiss_index/index.faiss"
+    metadata_path: "data/faiss_index/metadata.json"
+    top_k: 5
+
+# --- Cloud Layer ---
+cloud:
+  llm:
+    provider: "huggingface"
+    primary_model: "mistralai/Mistral-7B-Instruct-v0.3"
+    fallback_model: "microsoft/phi-2"
+    max_tokens: 2048
+    temperature: 0.3
+    timeout_seconds: 60
+    max_retries: 3
+  agent:
+    max_reasoning_steps: 5
+    enable_self_critique: true
+
+# --- LLMOps ---
+ops:
+  mlflow:
+    tracking_uri: "mlruns"
+    experiment_name: "devops-copilot"
+  prompt_registry:
+    prompts_dir: "src/cloud/prompts"
+    default_version: "v1"
+  evaluation:
+    metrics:
+      - relevance
+      - factual_correctness
+      - response_length
+      - latency
+
+# --- API ---
+api:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "*"
+
+# --- Data ---
+data:
+  raw_logs_dir: "data/raw_logs"
+  processed_dir: "data/processed"
+  docs_dir: "data/docs"

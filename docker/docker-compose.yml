@@ -1,0 +1,55 @@
+version: "3.9"
+
+services:
+  # --- Edge Layer ---
+  edge:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.edge
+    volumes:
+      - shared-data:/app/data
+    environment:
+      - LOG_LEVEL=INFO
+
+  # --- Fog Layer ---
+  fog:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.fog
+    volumes:
+      - shared-data:/app/data
+    environment:
+      - LOG_LEVEL=INFO
+    depends_on:
+      - edge
+
+  # --- Cloud Layer (API) ---
+  cloud-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.cloud
+    ports:
+      - "8000:8000"
+    volumes:
+      - shared-data:/app/data
+    environment:
+      - HUGGINGFACE_API_TOKEN=${HUGGINGFACE_API_TOKEN}
+      - LOG_LEVEL=INFO
+    depends_on:
+      - fog
+
+  # --- Streamlit Frontend ---
+  frontend:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: streamlit run frontend/app.py --server.port=8501 --server.headless=true
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://cloud-api:8000
+    depends_on:
+      - cloud-api
+
+volumes:
+  shared-data:

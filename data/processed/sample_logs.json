@@ -1,0 +1,62 @@
+[
+  {
+    "id": "sample_dep_01",
+    "content": "Traceback (most recent call last):\n  File \"app.py\", line 3, in <module>\n    import numpy as np\nModuleNotFoundError: No module named 'numpy'\n##[error]Process completed with exit code 1.",
+    "category": "dependency_error",
+    "metadata": {"ecosystem": "python", "platform": "github_actions", "source": "sample"}
+  },
+  {
+    "id": "sample_dep_02",
+    "content": "npm ERR! code ERESOLVE\nnpm ERR! ERESOLVE unable to resolve dependency tree\nnpm ERR! While resolving: my-app@1.0.0\nnpm ERR! Found: react@18.2.0\nnpm ERR! peer react@\"^17.0.0\" from react-router-dom@5.3.4\nnpm ERR! Could not resolve dependency:\nnpm ERR! Fix: npm install --legacy-peer-deps\n##[error]Process completed with exit code 1.",
+    "category": "dependency_error",
+    "metadata": {"ecosystem": "nodejs", "platform": "github_actions", "source": "sample"}
+  },
+  {
+    "id": "sample_syntax_01",
+    "content": "File \"main.py\", line 42\n    print(hello world)\n                    ^\nSyntaxError: invalid syntax\n##[error]Process completed with exit code 1.",
+    "category": "syntax_error",
+    "metadata": {"ecosystem": "python", "platform": "github_actions", "source": "sample"}
+  },
+  {
+    "id": "sample_env_01",
+    "content": "Error: Python version 3.12 is required but 3.9 was found.\nEnvironment variable PYTHON_VERSION is not set.\nVersion mismatch: required >=3.11, found 3.9.7\n##[error]Process completed with exit code 1.",
+    "category": "env_mismatch",
+    "metadata": {"ecosystem": "python", "platform": "github_actions", "source": "sample"}
+  },
+  {
+    "id": "sample_build_01",
+    "content": "Step 5/10 : RUN make build\nmake: *** [Makefile:25: all] Error 2\nERROR: compilation error in src/main.cpp:45\nundefined reference to 'calculate_sum'\nbuild failed with errors\nThe command returned a non-zero code: 2\n##[error]Docker build failed.",
+    "category": "build_failure",
+    "metadata": {"ecosystem": "docker", "platform": "github_actions", "source": "sample"}
+  },
+  {
+    "id": "sample_test_01",
+    "content": "============================= test session starts ==============================\ncollected 5 items\ntests/test_auth.py::test_login PASSED\ntests/test_auth.py::test_token_refresh FAILED\ntests/test_api.py::test_create_user PASSED\ntests/test_api.py::test_delete_user FAILED\n\nFAILED tests/test_auth.py::test_token_refresh - AssertionError: Expected 200, got 401\nFAILED tests/test_api.py::test_delete_user - AssertionError: assert 204 == 403\n\n========================= 2 failed, 3 passed in 4.52s =========================\n##[error]Process completed with exit code 1.",
+    "category": "test_failure",
+    "metadata": {"ecosystem": "python", "platform": "github_actions", "source": "sample"}
+  },
+  {
+    "id": "sample_timeout_01",
+    "content": "Error: operation timed out after 300 seconds\nThe job running on runner GitHub Actions 42 has exceeded the maximum execution time.\nThe operation was canceled because it exceeded the timeout of 5m0s.\n##[error]The operation was canceled.",
+    "category": "timeout",
+    "metadata": {"platform": "github_actions", "source": "sample"}
+  },
+  {
+    "id": "sample_perm_01",
+    "content": "PermissionError: [Errno 13] Permission denied: '/usr/local/lib/python3.9/site-packages'\nConsider using the --user option or running as root.\n##[error]Process completed with exit code 1.",
+    "category": "permission_error",
+    "metadata": {"ecosystem": "python", "platform": "github_actions", "source": "sample"}
+  },
+  {
+    "id": "sample_build_02",
+    "content": "=> ERROR [build 3/5] RUN pip install -r requirements.txt\n#8 5.432 ERROR: Could not find a version that satisfies the requirement tensorflow==2.15.0\n#8 5.432 ERROR: No matching distribution found for tensorflow==2.15.0\n------\nerror: failed to solve: process \"/bin/sh -c pip install -r requirements.txt\" did not complete successfully: exit code: 1",
+    "category": "dependency_error",
+    "metadata": {"ecosystem": "docker", "platform": "docker_build", "source": "sample"}
+  },
+  {
+    "id": "sample_syntax_02",
+    "content": "ERROR in src/App.tsx:15:8\nTS1005: ';' expected.\n  13 | const App = () => {\n  14 |   return (\n> 15 |     <div className=\"app\"\n     |        ^\n  16 |       <h1>Hello</h1>\n  17 |     </div>\n  18 |   )\nFailed to compile.\n##[error]Process completed with exit code 1.",
+    "category": "syntax_error",
+    "metadata": {"ecosystem": "nodejs", "platform": "github_actions", "source": "sample"}
+  }
+]

@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment variables
+.env
+
+# Data (large files)
+data/raw_logs/
+data/faiss_index/*.faiss
+data/docs/*.html
+data/docs/official/
+data/processed/stackoverflow/
+
+# MLflow
+mlruns/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.log
+
+# Coverage
+htmlcov/
+.coverage

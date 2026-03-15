@@ -1,501 +1,337 @@
-# 🔧 DevOps Copilot
+# DevOps Copilot
 
-> **Autonomous CI/CD Debugging Agent** powered by LLMs, RAG, and Agent-based reasoning.
+Autonomous CI/CD debugging assistant powered by rule-based parsing, retrieval-augmented generation (RAG), and LLM reasoning.
 
-DevOps Copilot is an intelligent system that ingests CI/CD failure logs, classifies the error type, retrieves relevant documentation via RAG, and generates structured debugging suggestions — all orchestrated through an **Edge–Fog–Cloud** architecture with full **LLMOps** observability.
+The project now runs as:
 
----
+- FastAPI backend in src/api
+- React + Vite frontend in web
+- Edge/Fog/Cloud modular pipeline in src/edge, src/fog, src/cloud
+- LLMOps utilities in src/ops (evaluation, prompt registry, tracking)
 
-## 📖 Table of Contents
+## What Is Current In This Repo
 
-- [Problem Statement](#-problem-statement)
-- [How It Works](#-how-it-works)
-- [Architecture](#-architecture)
-- [Project Structure](#-project-structure)
-- [Tech Stack](#-tech-stack)
-- [Quick Start](#-quick-start)
-- [Docker](#-docker)
-- [API Reference](#-api-reference)
-- [Frontend](#-frontend)
-- [LLMOps & AgentOps](#-llmops--agentops)
-- [Testing](#-testing)
-- [Deployment](#-deployment)
-- [Configuration](#-configuration)
-- [License](#-license)
+- Primary UI is React (web). Streamlit app in frontend/app.py is legacy.
+- API endpoints are exposed under /api/* from src/api/main.py.
+- FAISS index artifacts are expected at data/faiss_index/index.faiss and data/faiss_index/metadata.json.
+- Render deploy config is in render.yaml and uses the root Dockerfile.
 
----
+## Architecture
 
-## 🎯 Problem Statement
+Pipeline flow:
 
-When CI/CD pipelines fail, developers waste significant time:
-- Reading through hundreds of noisy log lines
-- Identifying the root cause (is it a dependency issue? a syntax error? a timeout?)
-- Searching documentation and Stack Overflow for solutions
-- Writing the actual fix
+1. Edge: preprocess + parse + classify failure logs
+2. Fog: embed query + retrieve relevant docs from FAISS
+3. Cloud: prompt LLM, reason, optionally self-critique, produce diagnosis and fixes
+4. Ops: evaluate quality and track run metadata/history
 
-**DevOps Copilot automates this entire workflow.** Paste a failure log, and it returns a structured diagnosis with actionable fix suggestions — in seconds.
+Core modules:
 
----
+- src/edge/log_parser.py
+- src/edge/classifier.py
+- src/edge/preprocessor.py
+- src/fog/retriever.py
+- src/fog/vector_store.py
+- src/cloud/agent.py
+- src/cloud/llm_client.py
+- src/ops/evaluator.py
+- src/api/main.py
 
-## ⚙️ How It Works
+## Project Structure
 
-The debugging pipeline follows a **5-step agentic workflow**:
+Top-level layout (current):
 
-```
-┌─────────────┐     ┌──────────────┐     ┌────────────────┐     ┌──────────────┐     ┌─────────────┐
-│  1. INGEST   │────▶│  2. CLASSIFY  │────▶│  3. RETRIEVE   │────▶│  4. REASON   │────▶│  5. OUTPUT  │
-│              │     │              │     │                │     │              │     │             │
-│ Raw CI/CD    │     │ Rule-based + │     │ Embed query    │     │ LLM generates│     │ Diagnosis + │
-│ log input    │     │ parser-boost │     │ → FAISS search │     │ diagnosis w/ │     │ fix suggest │
-│ → clean      │     │ → category + │     │ → top-k docs   │     │ self-critique│     │ + patch     │
-│ → normalize  │     │ confidence   │     │ as RAG context │     │ loop         │     │ + metrics   │
-└─────────────┘     └──────────────┘     └────────────────┘     └──────────────┘     └─────────────┘
-```
-
-### Step-by-Step Breakdown
-
-**Step 1 — Log Ingestion & Preprocessing (Edge Layer)**
-- Strips ANSI escape codes, timestamps, GitHub Actions control prefixes, and progress bars
-- Collapses excessive blank lines and whitespace
-- Truncates very long logs while preserving both the beginning (setup context) and end (error details)
-- Extracts the most relevant error section with surrounding context
-
-**Step 2 — Failure Classification (Edge Layer)**
-- Parses the log to extract structured information: error type, error message, exit code, file path, line number, stack trace, and CI/CD platform metadata
-- Runs rule-based scoring against 7 failure categories using weighted keyword matching
-- Boosts confidence using the parser's own classification as a strong signal
-- Outputs a `ClassificationResult` with category, confidence score (0–1), and human-readable reasoning
-
-**Supported failure categories:**
-| Category | Example Triggers |
-|----------|-----------------|
-| `dependency_error` | `ModuleNotFoundError`, `npm ERR!`, `pip install failed` |
-| `syntax_error` | `SyntaxError`, `unexpected token`, `parse error` |
-| `env_mismatch` | Version mismatch, missing environment variables |
-| `build_failure` | `build failed`, `compilation error`, Docker build failures |
-| `test_failure` | `FAILED`, `AssertionError`, `pytest` failures |
-| `timeout` | `timed out`, `deadline exceeded` |
-| `permission_error` | `PermissionError`, `access denied`, `EACCES` |
-
-**Step 3 — RAG Retrieval (Fog Layer)**
-- Generates a dense embedding of the error using `all-MiniLM-L6-v2` (384-dim) via SentenceTransformers
-- Searches a pre-built FAISS index for the top-k most similar documents (default k=5)
-- Returns ranked documents with relevance scores, formatted as context for the LLM
-- Supports building, saving, and loading FAISS indices from disk
-
-**Step 4 — LLM Reasoning & Self-Critique (Cloud Layer)**
-- Constructs a detailed prompt with: error classification, parsed error details, and retrieved RAG context
-- Sends to **Mistral 7B** (primary) or **Phi-2** (fallback) via the HuggingFace Inference API
-- The LLM generates: a natural-language diagnosis, numbered fix suggestions, and a patch recommendation
-- **Self-Critique Loop**: (optional, enabled by default) — the agent reviews its own output for accuracy, completeness, and edge cases. If the critique identifies issues, the diagnosis is refined.
-- The entire reasoning chain is captured as an `AgentStep` trace for full observability
-
-**Step 5 — Output & Evaluation (Ops Layer)**
-- The response is scored on 3 quality metrics:
-  - **Relevance** — does the diagnosis address the actual error?
-  - **Completeness** — are all aspects of the failure covered?
-  - **Actionability** — are the fix suggestions concrete and implementable?
-- Every run is logged to **MLflow** with: parameters (model, prompt version, error category), metrics (latency, tokens, evaluation scores), and artifacts (input log, diagnosis text)
-- Results are stored in session history accessible via the `/api/history` endpoint
-
----
-
-## 🏗️ Architecture
-
-The system follows an **Edge–Fog–Cloud** architecture inspired by edge computing paradigms:
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                      DevOps Copilot                           │
-│                                                               │
-│  ┌────────────┐    ┌───────────────┐    ┌─────────────────┐  │
-│  │    EDGE     │──▶│      FOG       │──▶│      CLOUD       │  │
-│  │            │    │               │    │                 │  │
-│  │ LogParser  │    │ Embeddings    │    │ LLMClient       │  │
-│  │ Classifier │    │ VectorStore   │    │ DebugAgent      │  │
-│  │ Preprocess │    │ Retriever     │    │ Prompts + Tools │  │
-│  └────────────┘    └───────────────┘    └─────────────────┘  │
-│                                                               │
-│  ┌───────────────────────────────────────────────────────┐   │
-│  │                   OPS (LLMOps)                         │   │
-│  │  MLflow Tracker │ Prompt Registry │ Agent Logger │ Eval │   │
-│  └───────────────────────────────────────────────────────┘   │
-│                                                               │
-│  ┌────────────────────┐    ┌────────────────────────────┐    │
-│  │   FastAPI Backend   │    │   React Frontend (Vite)    │    │
-│  │  /api/debug         │◀──│  Dashboard / Analyze / KB   │    │
-│  │  /api/health        │    │  History + reasoning trace  │    │
-│  │  /api/history       │    │  API-connected UI           │    │
-│  └────────────────────┘    └────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────┘
+```text
+Copilot/
+  configs/
+    config.yaml
+  data/
+    docs/
+    faiss_index/
+    processed/
+    raw_logs/
+  docker/
+    docker-compose.yml
+    Dockerfile.cloud
+    Dockerfile.edge
+    Dockerfile.fog
+  frontend/
+    app.py                     # legacy Streamlit UI
+  scripts/
+    benchmark.py
+    benchmark_mteb.py
+    build_index.py
+    collect_logs.py
+    eval_diagnosis.py
+    evaluate.py
+    fetch_knowledge.py
+    fetch_stackoverflow.py
+  src/
+    api/
+    cloud/
+    edge/
+    fog/
+    ops/
+  tests/
+    test_api/
+    test_cloud/
+    test_edge/
+    test_fog/
+    test_ops/
+  web/                         # React + TypeScript frontend (current UI)
+  Dockerfile
+  Makefile
+  README.md
+  render.yaml
+  requirements.txt
 ```
 
-| Layer | Responsibility | Key Components |
-|-------|---------------|----------------|
-| **Edge** | Fast, lightweight log processing at the "edge" — parsing, cleaning, and classifying raw logs before they hit heavier compute | `LogParser`, `FailureClassifier`, `LogPreprocessor` |
-| **Fog** | Intermediate intelligence — generates embeddings and performs vector similarity search to find relevant documentation | `EmbeddingGenerator`, `VectorStore` (FAISS), `Retriever` |
-| **Cloud** | Heavy compute — LLM inference, multi-step reasoning, and self-critique for high-quality diagnosis generation | `LLMClient`, `DebugAgent`, prompt templates |
-| **Ops** | Observability & governance — experiment tracking, prompt versioning, evaluation metrics, and agent activity logging | `MLflowTracker`, `PromptRegistry`, `Evaluator`, `AgentLogger` |
+## Prerequisites
 
----
+- Python 3.11+
+- Node.js 20+
+- Hugging Face token for cloud inference
 
-## 📁 Project Structure
+## Environment Setup
 
-```
-devops-copilot/
-├── .github/
-│   └── workflows/ci.yml          # CI pipeline: lint → test → Docker build
-├── configs/
-│   └── config.yaml                # Centralized configuration for all layers
-├── data/
-│   ├── raw_logs/                  # Raw CI/CD failure logs (3 samples included)
-│   ├── processed/sample_logs.json # 10 processed & labeled sample logs
-│   ├── docs/                      # Knowledge base documents for RAG
-│   └── faiss_index/               # Pre-built FAISS index files
-├── docker/
-│   ├── docker-compose.yml         # Multi-service orchestration
-│   ├── Dockerfile.edge            # Edge layer container
-│   ├── Dockerfile.fog             # Fog layer container
-│   └── Dockerfile.cloud           # Cloud layer container
-├── frontend/
-│   └── app.py                     # Legacy Streamlit UI (optional)
-├── web/
-│   ├── src/                       # React + TypeScript frontend source
-│   ├── package.json               # Frontend scripts and dependencies
-│   └── vite.config.ts             # Vite dev/build config
-├── scripts/
-│   ├── collect_logs.py            # Fetch & generate sample CI/CD logs
-│   ├── build_index.py             # Build FAISS index from documents
-│   └── evaluate.py                # Batch evaluation script
-├── src/
-│   ├── edge/                      # Edge Layer
-│   │   ├── log_parser.py          # Regex-based log parsing & extraction
-│   │   ├── classifier.py          # Rule-based failure classification
-│   │   └── preprocessor.py        # Log cleaning & normalization
-│   ├── fog/                       # Fog Layer
-│   │   ├── embeddings.py          # SentenceTransformers embedding generation
-│   │   ├── vector_store.py        # FAISS index management
-│   │   └── retriever.py           # RAG retrieval orchestrator
-│   ├── cloud/                     # Cloud Layer
-│   │   ├── llm_client.py          # HuggingFace Inference API wrapper
-│   │   ├── agent.py               # Multi-step debugging agent
-│   │   ├── tools.py               # Agent tool definitions
-│   │   └── prompts/               # Versioned prompt templates
-│   ├── ops/                       # Ops Layer (LLMOps)
-│   │   ├── mlflow_tracker.py      # MLflow experiment tracking
-│   │   ├── prompt_registry.py     # Prompt version management
-│   │   ├── evaluator.py           # Response quality evaluation
-│   │   └── agent_logger.py        # Agent activity JSON logging
-│   └── api/
-│       └── main.py                # FastAPI application
-├── tests/                         # Pytest test suites for all layers
-├── Dockerfile                     # Single-container build
-├── Makefile                       # Development shortcuts
-├── render.yaml                    # Render deployment config
-└── requirements.txt               # Python dependencies
+1. Create and activate Python environment.
+
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 ```
 
----
-
-## 🛠️ Tech Stack
-
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| **LLM** | Mistral 7B / Phi-2 | Primary and fallback models for reasoning |
-| **LLM API** | HuggingFace Inference API (free) | Serverless LLM inference |
-| **Embeddings** | SentenceTransformers (`all-MiniLM-L6-v2`) | 384-dim dense embeddings for semantic search |
-| **Vector DB** | FAISS | Fast approximate nearest-neighbor search |
-| **RAG** | Custom retrieval pipeline | Embed → Search → Format context |
-| **Agent** | Custom multi-step reasoning | Classify → Retrieve → Reason → Critique → Finalize |
-| **Backend** | FastAPI | Async REST API with Pydantic validation |
-| **Frontend** | React + Vite (TypeScript) | Multi-view debugging dashboard |
-| **Tracking** | MLflow | Experiment logging with params/metrics/artifacts |
-| **CI/CD** | GitHub Actions | Lint (ruff) → Test (pytest) → Docker build |
-| **Container** | Docker + Docker Compose | Multi-service deployment |
-| **Deploy** | Render | Free-tier cloud hosting |
-| **Language** | Python 3.11+ | Everything |
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- **Python 3.11+**
-- **HuggingFace API Token** — [Get one free](https://huggingface.co/settings/tokens)
-- **Git**
-
-### Setup
+Linux/macOS:
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/devops-copilot.git
-cd devops-copilot
+python -m venv .venv
+source .venv/bin/activate
+```
 
-# Create virtual environment
-python -m venv venv
-venv\Scripts\activate          # Windows
-# source venv/bin/activate     # Linux/macOS
+2. Install Python dependencies.
 
-# Install dependencies
+```bash
 pip install -r requirements.txt
-
-# Configure environment
-cp .env.example .env
-# Edit .env and add your HUGGINGFACE_API_TOKEN
 ```
 
-### Run
+3. Create .env from template and set token.
 
 ```bash
-# 1. (Optional) Build the FAISS index from sample data
-python scripts/build_index.py
+cp .env.example .env
+```
 
-# 2. Start the API server
-uvicorn src.api.main:app --reload --port 8086
+Required in .env:
 
-# 3. Start the React frontend (in another terminal)
+```env
+HUGGINGFACE_API_TOKEN=hf_xxx
+LOG_LEVEL=INFO
+APP_ENV=development
+```
+
+Optional:
+
+```env
+GITHUB_TOKEN=ghp_xxx
+MLFLOW_TRACKING_URI=mlruns
+PORT=8000
+```
+
+## Run Locally (Recommended)
+
+Run backend and frontend in separate terminals.
+
+Terminal 1: API
+
+```bash
+python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8086
+```
+
+Terminal 2: Web UI
+
+```bash
 cd web
 npm install
-npm run dev
+npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
-Then open **http://localhost:5173** in your browser, paste a CI/CD failure log, and click **Analyze Failure**.
+Then open http://127.0.0.1:5173.
 
----
+Notes:
 
-## 🐳 Docker
+- The React app defaults to backend URL http://127.0.0.1:8086 and stores it in localStorage.
+- You can change backend URL from the Analyze view input field.
+- API health check: GET http://127.0.0.1:8086/api/health
 
-### Single Container
+## Build Frontend
 
 ```bash
-docker build -t devops-copilot .
-docker run -p 8086:8000 -e HUGGINGFACE_API_TOKEN=your_token devops-copilot
+cd web
+npm run build
+npm run preview
 ```
 
-### Full Stack (Edge + Fog + Cloud + Frontend)
+## API Reference
 
-```bash
-docker-compose -f docker/docker-compose.yml up --build
-```
+### POST /api/debug
 
-This starts all services with inter-container networking.
+Request body:
 
----
-
-## 🔌 API Reference
-
-### `POST /api/debug`
-
-Submit a CI/CD failure log for analysis. Runs the full Edge → Fog → Cloud pipeline.
-
-**Request Body:**
 ```json
 {
-  "log_text": "ModuleNotFoundError: No module named 'numpy'...",
+  "log_text": "npm ERR! ERESOLVE unable to resolve dependency tree...",
   "enable_rag": true,
   "enable_self_critique": true,
   "max_steps": 5
 }
 ```
 
-**Response:**
-```json
-{
-  "classification": {
-    "category": "dependency_error",
-    "confidence": 0.85,
-    "reasoning": "Best match: dependency_error (score: 2.30)"
-  },
-  "diagnosis": "The pipeline is failing because the 'numpy' package...",
-  "fix_suggestions": [
-    "Add 'numpy' to requirements.txt",
-    "Run pip install numpy in the CI environment",
-    "Pin the version: numpy==1.24.0"
-  ],
-  "patch_recommendation": "# Add to requirements.txt\nnumpy==1.24.0",
-  "confidence": 0.85,
-  "reasoning_trace": [...],
-  "evaluation": {
-    "relevance": 0.9,
-    "completeness": 0.8,
-    "actionability": 0.85
-  },
-  "total_latency_ms": 3200
-}
-```
+Response fields:
 
-### `GET /api/health`
+- classification
+- diagnosis
+- fix_suggestions
+- patch_recommendation
+- confidence
+- reasoning_trace
+- evaluation
+- total_latency_ms
 
-Health check with uptime.
+### GET /api/health
 
-### `GET /api/history`
+Returns status, version, uptime.
 
-Returns past debugging session results (in-memory, last 50).
+### GET /api/history
 
-### `GET /api/metrics`
+Returns recent in-memory debug runs (latest first, capped in process).
 
-Returns MLflow experiment metrics summary.
+### GET /api/metrics
 
----
+Returns MLflow summary when available.
 
-## 🖥️ Frontend
+## Data And Retrieval
 
-The project now includes a production-style React frontend in `web/` (Vite + TypeScript), with a modern multi-view interface:
+- Knowledge documents: data/docs
+- Embedding index: data/faiss_index
+- Processed samples: data/processed/sample_logs.json
 
-- **Dashboard** — analysis metrics, top categories, and recent activity timeline
-- **Analyze** — split-pane workflow for raw logs and live AI diagnosis output
-- **Knowledge Base** — source overview for retrieval corpus
-- **History** — table of recent debugging sessions
-
-### Frontend Commands
+Build or rebuild FAISS index:
 
 ```bash
-# Start frontend dev server
-cd web
-npm install
-npm run dev
-
-# Build production assets
-npm run build
+python scripts/build_index.py
 ```
 
-The app connects to FastAPI via configurable backend URL (default: `http://127.0.0.1:8086`).
+## Scripts
 
-### Recommended Local Run Combo
+Useful scripts currently present:
 
-Terminal 1 (API):
-```bash
-uvicorn src.api.main:app --host 127.0.0.1 --port 8086
-```
+- scripts/collect_logs.py
+- scripts/fetch_knowledge.py
+- scripts/fetch_stackoverflow.py
+- scripts/build_index.py
+- scripts/evaluate.py
+- scripts/eval_diagnosis.py
+- scripts/benchmark.py
+- scripts/benchmark_mteb.py
 
-Terminal 2 (Frontend):
-```bash
-cd web
-npm run dev -- --host 127.0.0.1 --port 5173
-```
+## Testing And Quality
 
----
-
-## 📊 LLMOps & AgentOps
-
-### MLflow Experiment Tracking
-Every debugging run is logged with:
-- **Parameters**: model name, prompt version, error category, classification confidence
-- **Metrics**: latency (ms), tokens used, input/output length, evaluation scores
-- **Artifacts**: raw input log, generated diagnosis
-
-### Prompt Versioning
-- Prompt templates stored in `src/cloud/prompts/` as versioned text files
-- `PromptRegistry` manages prompt selection and A/B evaluation
-- Easy to create new prompt versions and compare performance via MLflow
-
-### Agent Activity Logging
-- Full JSON audit trail of every reasoning step the agent takes
-- Captures: action type, input summary, output summary, latency, and metadata
-- Useful for debugging the debugger and optimizing the agent workflow
-
-### Response Evaluation
-Automated quality scoring on 3 dimensions:
-- **Relevance** — does the diagnosis address the actual error category?
-- **Completeness** — does it cover error message, root cause, and fix?
-- **Actionability** — are fix suggestions concrete steps (not vague advice)?
-
----
-
-## 🧪 Testing
+Run all tests:
 
 ```bash
-# Run all tests
-pytest tests/ -v
-
-# Run tests for a specific layer
-pytest tests/test_edge/ -v
-pytest tests/test_fog/ -v
-pytest tests/test_cloud/ -v
-pytest tests/test_ops/ -v
-pytest tests/test_api/ -v
-
-# With coverage
-pytest tests/ --cov=src --cov-report=html
-
-# Lint
-ruff check src/ tests/
-
-# Batch evaluation (runs multiple logs through the pipeline)
-python scripts/evaluate.py
+python -m pytest tests -v
 ```
 
-**Current test coverage:**
-| Layer | Test File | Tests |
-|-------|-----------|-------|
-| Edge | `test_log_parser.py` | 12 tests |
-| Edge | `test_classifier.py` | 10 tests |
-| Edge | `test_preprocessor.py` | 10 tests |
-| Fog | `test_retriever.py` | ✓ |
-| Cloud | `test_agent.py` | ✓ |
-| Ops | `test_evaluator.py` | ✓ |
-| API | `test_routes.py` | ✓ |
+Run key suites:
 
----
-
-## 🌐 Deployment
-
-| Service | Platform | Tier |
-|---------|----------|------|
-| Backend API | [Render](https://render.com) | Free |
-| Frontend | [Vercel](https://vercel.com) or [Netlify](https://www.netlify.com) | Free |
-| LLM Inference | [HuggingFace Inference API](https://huggingface.co/inference-api) | Free |
-
-Deployment is configured via `render.yaml` for Render and GitHub Actions for CI/CD.
-
----
-
-## ⚙️ Configuration
-
-All configuration is centralized in `configs/config.yaml`:
-
-```yaml
-# Edge Layer
-edge:
-  classifier:
-    confidence_threshold: 0.6    # Min confidence to classify (vs. "unknown")
-    categories: [dependency_error, syntax_error, env_mismatch, ...]
-
-# Fog Layer
-fog:
-  embeddings:
-    model_name: "sentence-transformers/all-MiniLM-L6-v2"
-    dimension: 384
-  vector_store:
-    top_k: 5                     # Number of RAG results to retrieve
-
-# Cloud Layer
-cloud:
-  llm:
-    primary_model: "mistralai/Mistral-7B-Instruct-v0.3"
-    fallback_model: "microsoft/phi-2"
-    max_tokens: 2048
-    temperature: 0.3
-  agent:
-    max_reasoning_steps: 5
-    enable_self_critique: true
-
-# Ops
-ops:
-  mlflow:
-    experiment_name: "devops-copilot"
+```bash
+python -m pytest tests/test_edge/test_log_parser.py tests/test_edge/test_classifier.py tests/test_cloud/test_agent.py -q
 ```
 
-Environment variables (`.env`):
+Coverage:
+
+```bash
+python -m pytest tests --cov=src --cov-report=html
 ```
-HUGGINGFACE_API_TOKEN=hf_your_token_here
-LOG_LEVEL=INFO
-PORT=8086
+
+Lint:
+
+```bash
+ruff check src tests
 ```
 
----
+## Docker
 
-## 📄 License
+Root Dockerfile runs FastAPI on container port 8000.
 
-MIT License
+Build image:
+
+```bash
+docker build -t devops-copilot .
+```
+
+Run container and map to local 8086:
+
+```bash
+docker run --rm -p 8086:8000 --env-file .env devops-copilot
+```
+
+Health check:
+
+```bash
+curl http://127.0.0.1:8086/api/health
+```
+
+Compose stack:
+
+```bash
+docker compose -f docker/docker-compose.yml up --build
+```
+
+Important: docker/docker-compose.yml still includes the legacy Streamlit frontend service. The modern React frontend is in web and is typically run separately for local development.
+
+## Deployment
+
+Render configuration:
+
+- File: render.yaml
+- Service type: web
+- Runtime: docker
+- Health path: /api/health
+- Required secret env var: HUGGINGFACE_API_TOKEN
+
+## Configuration
+
+Main config file: configs/config.yaml
+
+Includes:
+
+- edge parser/classifier options
+- fog embedding and vector store paths
+- cloud LLM/provider and agent settings
+- ops tracking and evaluation settings
+- API host/port defaults
+
+## Troubleshooting
+
+1. API starts on wrong port:
+   Start with explicit host and port:
+
+   python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8086
+
+2. Frontend cannot reach backend:
+   Update backend URL in Analyze view to your running API URL.
+
+3. RAG returns empty context:
+   Ensure both files exist:
+
+   - data/faiss_index/index.faiss
+   - data/faiss_index/metadata.json
+
+4. LLM call failures:
+   Verify HUGGINGFACE_API_TOKEN in .env and outbound internet access.
+
+## License
+
+MIT

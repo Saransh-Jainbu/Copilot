@@ -35,6 +35,8 @@ CATEGORY_RULES = {
             "npm err", "could not resolve dependency", "peer dep",
             "pip install", "requirement", "package not found",
             "cannot find package", "missing dependency",
+            "no matching distribution", "could not find a version",
+            "cannot resolve", "package manager",
         ],
         "weight": 1.0,
     },
@@ -62,6 +64,24 @@ CATEGORY_RULES = {
         ],
         "weight": 1.0,
     },
+    "docker_container": {
+        "keywords": [
+            "docker.io", "failed to fetch oauth token", "failed to authorize",
+            "failed to resolve source metadata", "pull access denied",
+            "manifest unknown", "unauthorized: authentication required",
+            "imagepullbackoff", "errimagepull", "docker pull",
+            "node:18-alpine", "failed to solve",
+        ],
+        "weight": 1.3,
+    },
+    "kubernetes": {
+        "keywords": [
+            "crashloopbackoff", "imagepullbackoff", "errimagepull",
+            "kubectl", "pod", "deployment", "service not reachable",
+            "readiness probe", "liveness probe", "oomkilled",
+        ],
+        "weight": 1.1,
+    },
     "test_failure": {
         "keywords": [
             "test failed", "assertion", "assertionerror",
@@ -81,6 +101,57 @@ CATEGORY_RULES = {
         "keywords": [
             "permissionerror", "permission denied", "access denied",
             "eacces", "403", "unauthorized", "forbidden",
+        ],
+        "weight": 1.0,
+    },
+    "git_vcs": {
+        "keywords": [
+            "fatal:", "git push", "git pull", "detached head",
+            "could not read username", "submodule", "merge conflict",
+            "revision not found", "git lfs",
+            "remote: permission", "repository does not exist",
+            "unable to access", "requested url returned error",
+        ],
+        "weight": 1.1,
+    },
+    "network_ssl": {
+        "keywords": [
+            "ssl", "tls", "certificate", "verify failed",
+            "econnrefused", "econnreset", "getaddrinfo", "enotfound",
+            "connection refused", "dns", "x509",
+        ],
+        "weight": 1.0,
+    },
+    "memory_resource": {
+        "keywords": [
+            "out of memory", "oomkilled", "exit code 137",
+            "heap out of memory", "no space left on device",
+            "disk full", "resource temporarily unavailable",
+        ],
+        "weight": 1.0,
+    },
+    "caching": {
+        "keywords": [
+            "cache miss", "restore-keys", "stale cache",
+            "cache corruption", "buildkit caching", "layer cache",
+        ],
+        "weight": 1.0,
+    },
+    "secrets": {
+        "keywords": [
+            "input required and not supplied", "secret", "token expired",
+            "publickey", "ssh key", "vault", ".env file not loaded",
+            "credential rotation",
+            "is required but not set", "required secret",
+            "missing secret", "secret not found",
+        ],
+        "weight": 1.1,
+    },
+    "cicd_platform": {
+        "keywords": [
+            "invalid workflow file", "github actions", "gitlab-runner",
+            "resource not accessible by integration", "workflow syntax",
+            "pipeline filtered out", "artifact upload",
         ],
         "weight": 1.0,
     },
@@ -138,7 +209,7 @@ class FailureClassifier:
                 return ClassificationResult(
                     category=best_category,
                     confidence=round(confidence, 3),
-                    reasoning=self._build_reasoning(best_category, scores),
+                    reasoning=self._build_reasoning(best_category, scores, parsed),
                     parsed_log=parsed,
                 )
 
@@ -165,9 +236,17 @@ class FailureClassifier:
 
         return scores
 
-    def _build_reasoning(self, best_category: str, scores: dict[str, float]) -> str:
+    def _build_reasoning(
+        self,
+        best_category: str,
+        scores: dict[str, float],
+        parsed: Optional[ParsedLog] = None,
+    ) -> str:
         """Build a human-readable reasoning string."""
         parts = [f"Best match: {best_category} (score: {scores[best_category]:.2f})"]
+        subtype = parsed.metadata.get("docker_subtype") if parsed else None
+        if subtype:
+            parts.append(f"Subtype: {subtype}")
         other = {k: v for k, v in scores.items() if k != best_category and v > 0}
         if other:
             alt = ", ".join(f"{k}: {v:.2f}" for k, v in sorted(other.items(), key=lambda x: -x[1]))

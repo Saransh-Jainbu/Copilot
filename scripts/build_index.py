@@ -1,6 +1,8 @@
 """
 Build FAISS Index
 Processes collected documents and builds the vector search index.
+Recursively reads all docs from data/docs/ (including subdirectories)
+and all processed data from data/processed/ (including StackOverflow JSON).
 """
 
 import json
@@ -15,19 +17,39 @@ from src.fog.retriever import Retriever
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Supported text document extensions
+TEXT_EXTENSIONS = {".md", ".txt", ".rst", ".yml", ".yaml", ".adoc"}
+
 
 def load_documents(docs_dir: str, processed_dir: str) -> list[dict]:
-    """Load documents from docs and processed directories."""
+    """Load documents from docs and processed directories (recursively)."""
     documents = []
     doc_id = 0
 
-    # Load markdown docs
+    # ---------------------------------------------------
+    # 1. Load text docs (markdown, rst, yml, adoc, txt)
+    #    Recurse into ALL subdirectories
+    # ---------------------------------------------------
     if os.path.exists(docs_dir):
-        for filename in os.listdir(docs_dir):
-            if filename.endswith((".md", ".txt")):
-                filepath = os.path.join(docs_dir, filename)
-                with open(filepath, "r", encoding="utf-8") as f:
-                    content = f.read()
+        for root, _dirs, files in os.walk(docs_dir):
+            for filename in sorted(files):
+                ext = os.path.splitext(filename)[1].lower()
+                if ext not in TEXT_EXTENSIONS:
+                    continue
+
+                filepath = os.path.join(root, filename)
+                try:
+                    with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read()
+                except Exception as e:
+                    logger.warning(f"Could not read {filepath}: {e}")
+                    continue
+
+                if len(content.strip()) < 50:
+                    continue  # skip near-empty files
+
+                # Relative path for source reference
+                rel_path = os.path.relpath(filepath, docs_dir)
 
                 # Split long docs into chunks
                 chunks = split_into_chunks(content, max_chars=1000)
@@ -35,30 +57,81 @@ def load_documents(docs_dir: str, processed_dir: str) -> list[dict]:
                     documents.append({
                         "id": f"doc_{doc_id}",
                         "content": chunk,
-                        "source": f"{filename}#chunk{i}",
-                        "metadata": {"type": "documentation", "file": filename},
+                        "source": f"{rel_path}#chunk{i}",
+                        "metadata": {"type": "documentation", "file": rel_path},
                     })
                     doc_id += 1
 
-    # Load processed error logs
+    # ---------------------------------------------------
+    # 2. Load processed JSON data (sample logs + SO data)
+    #    Recurse into ALL subdirectories
+    # ---------------------------------------------------
     if os.path.exists(processed_dir):
-        for filename in os.listdir(processed_dir):
-            if filename.endswith(".json"):
-                filepath = os.path.join(processed_dir, filename)
-                with open(filepath, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        for item in data:
+        for root, _dirs, files in os.walk(processed_dir):
+            for filename in sorted(files):
+                if not filename.endswith(".json"):
+                    continue
+
+                filepath = os.path.join(root, filename)
+                rel_path = os.path.relpath(filepath, processed_dir)
+
+                try:
+                    with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+                        data = json.load(f)
+                except Exception as e:
+                    logger.warning(f"Could not parse {filepath}: {e}")
+                    continue
+
+                if isinstance(data, list):
+                    for item in data:
+                        content = _extract_json_content(item)
+                        if len(content.strip()) < 30:
+                            continue
+
+                        # Chunk long entries
+                        chunks = split_into_chunks(content, max_chars=1200)
+                        for i, chunk in enumerate(chunks):
                             documents.append({
                                 "id": f"doc_{doc_id}",
-                                "content": item.get("content", json.dumps(item)),
-                                "source": filename,
-                                "metadata": {"type": "error_log", **item.get("metadata", {})},
+                                "content": chunk,
+                                "source": f"{rel_path}#item{doc_id}",
+                                "metadata": {
+                                    "type": "stackoverflow" if "so_" in filename else "error_log",
+                                    "file": rel_path,
+                                    **item.get("metadata", {}),
+                                },
                             })
                             doc_id += 1
 
-    logger.info(f"Loaded {len(documents)} document chunks")
+    logger.info(f"Loaded {doc_id} document chunks total")
     return documents
+
+
+def _extract_json_content(item: dict) -> str:
+    """Extract readable content from a JSON item (supports SO format and generic)."""
+    parts = []
+
+    # StackOverflow format: title + body + answers
+    if "title" in item:
+        parts.append(f"Q: {item['title']}")
+    if "body" in item:
+        parts.append(item["body"])
+    if "answers" in item and isinstance(item["answers"], list):
+        for ans in item["answers"][:3]:  # Top 3 answers
+            if isinstance(ans, dict) and "body" in ans:
+                parts.append(f"A: {ans['body']}")
+            elif isinstance(ans, str):
+                parts.append(f"A: {ans}")
+
+    # Generic format: content field
+    if "content" in item:
+        parts.append(item["content"])
+
+    # Fallback: dump the whole item
+    if not parts:
+        parts.append(json.dumps(item, indent=2)[:2000])
+
+    return "\n\n".join(parts)
 
 
 def split_into_chunks(text: str, max_chars: int = 1000) -> list[str]:
@@ -83,14 +156,18 @@ def split_into_chunks(text: str, max_chars: int = 1000) -> list[str]:
 if __name__ == "__main__":
     docs_dir = "data/docs"
     processed_dir = "data/processed"
-    index_path = "data/faiss_index/index.faiss"
-    metadata_path = "data/faiss_index/metadata.json"
+    index_dir = "data/faiss_index"
+    index_path = os.path.join(index_dir, "index.faiss")
+    metadata_path = os.path.join(index_dir, "metadata.json")
 
-    print("📂 Loading documents...")
+    # Ensure output dir exists
+    os.makedirs(index_dir, exist_ok=True)
+
+    print("[*] Loading documents...")
     documents = load_documents(docs_dir, processed_dir)
 
     if not documents:
-        print("⚠️  No documents found. Run collect_logs.py first.")
+        print("[!] No documents found. Run fetch_knowledge.py first.")
         print("    Creating sample documents for testing...")
         documents = [
             {
@@ -113,7 +190,16 @@ if __name__ == "__main__":
             },
         ]
 
-    print(f"🔧 Building FAISS index with {len(documents)} documents...")
+    print(f"[*] Building FAISS index with {len(documents)} documents...")
+
+    # Show breakdown by type
+    type_counts = {}
+    for doc in documents:
+        t = doc.get("metadata", {}).get("type", "unknown")
+        type_counts[t] = type_counts.get(t, 0) + 1
+    for doc_type, count in sorted(type_counts.items()):
+        print(f"    {doc_type}: {count} chunks")
+
     retriever = Retriever()
     retriever.build_index(
         documents=documents,
@@ -121,5 +207,6 @@ if __name__ == "__main__":
         save_path=(index_path, metadata_path),
     )
 
-    print(f"✅ Index saved to {index_path}")
-    print(f"✅ Metadata saved to {metadata_path}")
+    print(f"\n[OK] Index saved to {index_path}")
+    print(f"[OK] Metadata saved to {metadata_path}")
+    print(f"[OK] Total: {len(documents)} document chunks indexed")

@@ -59,6 +59,15 @@ PATTERNS = {
         re.compile(r"(?i)(error\[E\d+\]|FAILED:.*)\s*(.*)"),
         re.compile(r"(?i)(docker build.*failed|Dockerfile.*error)\s*(.*)"),
     ],
+    "docker_container": [
+        re.compile(r"(?i)(failed to fetch oauth token|failed to authorize|failed to resolve source metadata)\s*(.*)"),
+        re.compile(r"(?i)(docker\.io|pull access denied|unauthorized: authentication required)\s*(.*)"),
+        re.compile(r"(?i)(manifest for .+ not found|imagepullbackoff|errimagepull)\s*(.*)"),
+    ],
+    "kubernetes": [
+        re.compile(r"(?i)(CrashLoopBackOff|ImagePullBackOff|ErrImagePull|OOMKilled)\s*(.*)"),
+        re.compile(r"(?i)(liveness probe failed|readiness probe failed|pod stuck in pending)\s*(.*)"),
+    ],
     "test_failure": [
         re.compile(r"(?i)(FAILED|FAIL)\s+(test[_\w]*|[\w/]+test[\w]*)\s*(.*)"),
         re.compile(r"(?i)(AssertionError|assertion failed|expect.*to)\s*(.*)"),
@@ -72,12 +81,88 @@ PATTERNS = {
         re.compile(r"(?i)(PermissionError|permission denied|access denied)\s*(.*)"),
         re.compile(r"(?i)(EACCES|403 Forbidden|unauthorized)\s*(.*)"),
     ],
+    "git_vcs": [
+        re.compile(r"(?i)(fatal: could not read Username|failed to push some refs|revision .+ not found)\s*(.*)"),
+        re.compile(r"(?i)(detached HEAD|submodule|git lfs)\s*(.*)"),
+    ],
+    "network_ssl": [
+        re.compile(r"(?i)(CERTIFICATE_VERIFY_FAILED|SSL|TLS|x509)\s*(.*)"),
+        re.compile(r"(?i)(ECONNREFUSED|ECONNRESET|getaddrinfo ENOTFOUND|connection refused)\s*(.*)"),
+    ],
+    "memory_resource": [
+        re.compile(r"(?i)(out of memory|OOMKilled|exit code 137|heap out of memory)\s*(.*)"),
+        re.compile(r"(?i)(No space left on device|resource temporarily unavailable)\s*(.*)"),
+    ],
+    "caching": [
+        re.compile(r"(?i)(cache miss|restore-keys|stale cache|cache corruption)\s*(.*)"),
+    ],
+    "secrets": [
+        re.compile(r"(?i)(Input required and not supplied: token|Permission denied \(publickey\)|token expired)\s*(.*)"),
+        re.compile(r"(?i)(secret .+ not available|\.env file not loaded|Vault)\s*(.*)"),
+    ],
+    "cicd_platform": [
+        re.compile(r"(?i)(Invalid workflow file|Resource not accessible by integration|Pipeline filtered out)\s*(.*)"),
+        re.compile(r"(?i)(This job is stuck because the project doesn't have any runners|artifact upload)\s*(.*)"),
+    ],
 }
 
 EXIT_CODE_PATTERN = re.compile(r"(?:exit code|exited with|return code)[:\s]+(\d+)", re.IGNORECASE)
 FILE_LINE_PATTERN = re.compile(r"(?:File|at)\s+[\"']?([^\s\"':]+)[\"']?\s*(?:,\s*line\s+(\d+))?")
 STACK_TRACE_PATTERN = re.compile(r"^\s+(at\s+|File\s+|Traceback|\.{3})", re.MULTILINE)
 ERROR_LINE_PATTERN = re.compile(r"(?i)^.*(?:error|fail|fatal|exception|critical).*$", re.MULTILINE)
+DOCKER_IMAGE_PATTERN = re.compile(
+    r"(?i)\b((?:(?:[a-z0-9.-]+(?::\d+)?)/)?(?:[a-z0-9._-]+/)*[a-z0-9._-]+(?::[a-z0-9._-]+))\b"
+)
+HTTP_STATUS_TEXT_PATTERN = re.compile(
+    r"\b([1-5]\d{2})\s+(Unauthorized|Forbidden|Not Found|Too Many Requests|Internal Server Error|Bad Request)\b",
+    re.IGNORECASE,
+)
+DOCKERFILE_LINE_PATTERN = re.compile(r"(?i)Dockerfile:(\d+)")
+DOCKER_STAGE_PATTERN = re.compile(r"#(\d+)\s+\[([^\]]+)\]")
+DOCKERFILE_SNIPPET_PATTERN = re.compile(r"^\s*(\d+)\s+\|\s+(.+)$", re.MULTILINE)
+
+DOCKER_SUBTYPE_PATTERNS = {
+    "registry_auth": [
+        re.compile(r"(?i)failed to fetch oauth token"),
+        re.compile(r"(?i)failed to authorize"),
+        re.compile(r"(?i)401 unauthorized"),
+        re.compile(r"(?i)unauthorized: authentication required"),
+        re.compile(r"(?i)unauthorized: incorrect"),
+        re.compile(r"(?i)pull access denied"),
+        re.compile(r"(?i)denied: requested access to the resource is denied"),
+    ],
+    "image_not_found": [
+        re.compile(r"(?i)manifest for .+ not found"),
+        re.compile(r"(?i)manifest unknown"),
+        re.compile(r"(?i)repository does not exist"),
+        re.compile(r"(?i)name unknown"),
+    ],
+    "build_context_missing": [
+        re.compile(r"(?i)copy failed: file not found in build context"),
+        re.compile(r"(?i)failed to compute cache key"),
+        re.compile(r"(?i)not found: not found"),
+    ],
+    "rate_limit": [
+        re.compile(r"(?i)too many requests"),
+        re.compile(r"(?i)toomanyrequests"),
+        re.compile(r"(?i)rate limit"),
+    ],
+    "oom_killed": [
+        re.compile(r"(?i)oomkilled"),
+        re.compile(r"(?i)exit code 137"),
+        re.compile(r"(?i)out of memory"),
+    ],
+    "port_conflict": [
+        re.compile(r"(?i)port is already allocated"),
+        re.compile(r"(?i)address already in use"),
+        re.compile(r"(?i)bind: address already in use"),
+    ],
+    "entrypoint_exit": [
+        re.compile(r"(?i)executable file not found"),
+        re.compile(r"(?i)container .* exited"),
+        re.compile(r"(?i)no such file or directory"),
+    ],
+}
 
 
 class LogParser:
@@ -231,7 +316,7 @@ class LogParser:
             ecosystems.append("python")
         if any(kw in log.lower() for kw in ["npm", "node", "yarn", ".js", ".ts"]):
             ecosystems.append("nodejs")
-        if any(kw in log.lower() for kw in ["docker", "dockerfile", "container"]):
+        if any(kw in log.lower() for kw in ["docker", "dockerfile", "container", "daemon:", "manifest unknown", "registry-1.docker.io", "imagepullbackoff"]):
             ecosystems.append("docker")
         if any(kw in log.lower() for kw in ["go build", "go test", ".go"]):
             ecosystems.append("go")
@@ -239,4 +324,76 @@ class LogParser:
             ecosystems.append("java")
         metadata["ecosystems"] = ecosystems
 
+        if "docker" in ecosystems:
+            metadata.update(self._extract_docker_metadata(log))
+
         return metadata
+
+    def _extract_docker_metadata(self, log: str) -> dict:
+        """Extract Docker-specific subtype and artifact details."""
+        docker_metadata: dict = {}
+
+        subtype = self._detect_docker_subtype(log)
+        if subtype:
+            docker_metadata["docker_subtype"] = subtype
+
+        images = []
+        for match in DOCKER_IMAGE_PATTERN.findall(log):
+            image = match.strip()
+            if ":" not in image:
+                continue
+            if image.lower().startswith(("http:", "https:")):
+                continue
+            if image not in images:
+                images.append(image)
+
+        if images:
+            docker_metadata["docker_images"] = images[:10]
+
+        registries = []
+        for image in images:
+            if "/" in image:
+                first_part = image.split("/", 1)[0]
+                if "." in first_part or ":" in first_part:
+                    if first_part not in registries:
+                        registries.append(first_part)
+        if registries:
+            docker_metadata["docker_registries"] = registries[:10]
+
+        http_statuses = []
+        for code, text in HTTP_STATUS_TEXT_PATTERN.findall(log):
+            item = f"{code} {text}"
+            if item not in http_statuses:
+                http_statuses.append(item)
+        if http_statuses:
+            docker_metadata["http_statuses"] = http_statuses[:10]
+
+        stage_matches = DOCKER_STAGE_PATTERN.findall(log)
+        if stage_matches:
+            docker_metadata["docker_build_stages"] = [
+                {"step": step, "name": name.strip()} for step, name in stage_matches[:10]
+            ]
+
+        dockerfile_line_match = DOCKERFILE_LINE_PATTERN.search(log)
+        if dockerfile_line_match:
+            dockerfile_line = int(dockerfile_line_match.group(1))
+            docker_metadata["dockerfile_line"] = dockerfile_line
+
+            snippet_lines = {
+                int(line_no): content.strip()
+                for line_no, content in DOCKERFILE_SNIPPET_PATTERN.findall(log)
+            }
+            if dockerfile_line in snippet_lines:
+                docker_metadata["failing_instruction"] = snippet_lines[dockerfile_line]
+
+        if "docker.io" in log.lower() and not registries:
+            docker_metadata["docker_registries"] = ["docker.io"]
+
+        return docker_metadata
+
+    def _detect_docker_subtype(self, log: str) -> Optional[str]:
+        """Detect a more precise Docker/container failure subtype."""
+        for subtype, patterns in DOCKER_SUBTYPE_PATTERNS.items():
+            if any(pattern.search(log) for pattern in patterns):
+                return subtype
+        return None

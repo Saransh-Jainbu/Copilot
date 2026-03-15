@@ -6,7 +6,7 @@ install:
 
 # --- Development ---
 run-api:
-	uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+	uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8080
 
 run-frontend:
 	streamlit run frontend/app.py --server.port 8501

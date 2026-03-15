@@ -45,6 +45,17 @@ class TestFailureClassifier:
         result = classifier.classify(log)
         assert result.category == "permission_error"
 
+    def test_classify_docker_registry_auth_error(self, classifier):
+        log = (
+            "failed to authorize: rpc error: code = Unknown desc = failed to fetch oauth token: "
+            "unexpected status: 401 Unauthorized\n"
+            "failed to resolve source metadata for docker.io/library/node:18-alpine"
+        )
+        result = classifier.classify(log)
+        assert result.category == "docker_container"
+        assert result.confidence > 0
+        assert "Subtype: registry_auth" in result.reasoning
+
     def test_classify_unknown(self, classifier):
         log = "Everything is fine, no errors here."
         result = classifier.classify(log)

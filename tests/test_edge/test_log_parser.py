@@ -96,6 +96,31 @@ class TestLogParser:
         result = parser.parse(log)
         assert result.error_type == "unknown"
 
+    def test_parse_docker_registry_auth_subtype(self, parser):
+        log = """
+        #3 [internal] load metadata for docker.io/library/node:18-alpine
+        #3 ERROR: failed to authorize: rpc error: code = Unknown desc = failed to fetch oauth token:
+        unexpected status: 401 Unauthorized
+        ERROR: failed to solve: node:18-alpine: failed to resolve source metadata
+        """
+        result = parser.parse(log)
+        assert result.error_type == "docker_container"
+        assert result.metadata["docker_subtype"] == "registry_auth"
+        assert "node:18-alpine" in result.metadata["docker_images"]
+        assert "docker.io" in result.metadata["docker_registries"]
+        assert "401 Unauthorized" in result.metadata["http_statuses"]
+
+    def test_parse_docker_instruction_evidence(self, parser):
+        log = """
+        #3 [internal] load metadata for docker.io/library/node:18-alpine
+        Dockerfile:1
+           1 | FROM node:18-alpine
+           2 | WORKDIR /app
+        """
+        result = parser.parse(log)
+        assert result.metadata["dockerfile_line"] == 1
+        assert result.metadata["failing_instruction"] == "FROM node:18-alpine"
+
     def test_extract_stack_trace(self, parser):
         log = """
         Traceback (most recent call last):

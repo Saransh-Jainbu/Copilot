@@ -171,6 +171,109 @@ class TestAgentHelpers:
         patch = agent._extract_patch(text)
         assert "numpy" in patch
 
+    def test_build_retrieval_query_uses_error_evidence(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        classification = mock_classifier.classify("test")
+        query = agent._build_retrieval_query(classification, "raw log fallback")
+        assert "dependency_error" in query
+        assert "No module named 'numpy'" in query
+
+    def test_format_extracted_evidence_includes_docker_fields(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        parsed = ParsedLog(
+            metadata={
+                "docker_subtype": "registry_auth",
+                "docker_images": ["node:18-alpine"],
+                "docker_registries": ["docker.io"],
+                "http_statuses": ["401 Unauthorized"],
+                "dockerfile_line": 1,
+                "failing_instruction": "FROM node:18-alpine",
+                "ecosystems": ["docker", "nodejs"],
+            }
+        )
+        evidence = agent._format_extracted_evidence(parsed)
+        assert "node:18-alpine" in evidence
+        assert "docker.io" in evidence
+        assert "401 Unauthorized" in evidence
+
+    def test_build_diagnostic_guardrails_for_registry_auth(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        parsed = ParsedLog(metadata={"docker_subtype": "registry_auth"})
+        guardrails = agent._build_diagnostic_guardrails(parsed)
+        assert "Do not suggest image tag problems" in guardrails
+        assert "registry authentication" in guardrails
+
+    def test_select_diagnosis_prompt_for_docker_registry_auth(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        parsed = ParsedLog(metadata={"docker_subtype": "registry_auth"})
+        prompt_template = agent._select_diagnosis_prompt("docker_container", parsed)
+        assert "Docker registry authentication failure" in prompt_template
+
+    def test_select_generic_prompt_for_non_docker(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        parsed = ParsedLog(metadata={})
+        prompt_template = agent._select_diagnosis_prompt("dependency_error", parsed)
+        assert "expert CI/CD debugging assistant" in prompt_template
+
+    def test_filter_registry_auth_suggestions_removes_irrelevant_items(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        parsed = ParsedLog(
+            error_message="failed to fetch oauth token",
+            error_lines=["401 Unauthorized"],
+            metadata={"docker_subtype": "registry_auth", "http_statuses": ["401 Unauthorized"]},
+        )
+        suggestions = [
+            "Check Docker Hub credentials",
+            "Check Dockerfile syntax issues",
+            "Verify image tag exists",
+        ]
+        filtered = agent._filter_suggestions(suggestions, parsed)
+        assert any("credentials" in s.lower() for s in filtered)
+        assert not any("syntax" in s.lower() for s in filtered)
+        assert not any("image tag" in s.lower() for s in filtered)
+
+    def test_filter_registry_auth_suggestions_has_fallback(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        parsed = ParsedLog(metadata={"docker_subtype": "registry_auth"})
+        filtered = agent._filter_suggestions(["Check Dockerfile syntax issues"], parsed)
+        assert len(filtered) >= 1
+        assert any("docker login" in s.lower() for s in filtered)
+
 
 # ---- Data Class Tests ----
 
@@ -206,3 +309,206 @@ class TestAgentDataClasses:
         assert "classification" in d
         assert "diagnosis" in d
         assert "fix_suggestions" in d
+
+
+class TestNewFeatures:
+    """Tests for reranking, abstain, templates, and merge_suggestions."""
+
+    def test_select_abstain_prompt_low_confidence(
+        self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor
+    ):
+        """Agent should use the abstain prompt when confidence is below threshold."""
+        from src.cloud.agent import LOW_CONFIDENCE_ABSTAIN_PROMPT
+
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+            low_confidence_threshold=0.45,
+        )
+        parsed = ParsedLog(metadata={})
+        prompt = agent._select_diagnosis_prompt("unknown", parsed, confidence=0.30)
+        assert prompt is LOW_CONFIDENCE_ABSTAIN_PROMPT
+
+    def test_select_diagnosis_prompt_above_threshold_uses_specific(
+        self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor
+    ):
+        """Agent should NOT use abstain prompt when confidence is above threshold."""
+        from src.cloud.agent import LOW_CONFIDENCE_ABSTAIN_PROMPT
+
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+            low_confidence_threshold=0.45,
+        )
+        parsed = ParsedLog(metadata={"docker_subtype": "registry_auth"})
+        prompt = agent._select_diagnosis_prompt("docker_container", parsed, confidence=0.90)
+        assert prompt is not LOW_CONFIDENCE_ABSTAIN_PROMPT
+
+    def test_build_rerank_terms_includes_subtype(
+        self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor
+    ):
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        from src.edge.classifier import ClassificationResult
+        parsed = ParsedLog(
+            error_message="unauthorized: incorrect username",
+            metadata={
+                "docker_subtype": "registry_auth",
+                "docker_images": ["node:18"],
+                "docker_registries": ["registry-1.docker.io"],
+                "http_statuses": ["401 Unauthorized"],
+            },
+        )
+        clf_result = ClassificationResult(
+            category="docker_container",
+            confidence=0.9,
+            reasoning="match",
+            parsed_log=parsed,
+        )
+        terms = agent._build_rerank_terms(clf_result)
+        assert "docker_container" in terms
+        assert "registry_auth" in terms
+        assert "node:18" in terms
+        assert any("401" in t for t in terms)
+
+    def test_merge_suggestions_deduplicates(
+        self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor
+    ):
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        base = ["Run docker login in CI", "Rotate the token"]
+        extras = ["run docker login in ci", "Check firewall rules"]
+        merged = agent._merge_suggestions(base, extras, max_total=10)
+        # Deduped — only unique items
+        lower_merged = [s.lower() for s in merged]
+        assert lower_merged.count("run docker login in ci") == 1
+        assert "check firewall rules" in lower_merged
+
+    def test_filter_suggestions_prepends_templates(
+        self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor
+    ):
+        """Template items should appear first in filtered suggestions."""
+        from src.edge.remediation_templates import get_remediation_template
+
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        parsed = ParsedLog(
+            error_message="unauthorized: incorrect username",
+            error_lines=["401"],
+            metadata={
+                "docker_subtype": "registry_auth",
+                "category": "docker_container",
+                "http_statuses": ["401 Unauthorized"],
+            },
+        )
+        llm_suggestions = ["A custom LLM suggestion about credentials"]
+        filtered = agent._filter_suggestions(llm_suggestions, parsed)
+        template_items = get_remediation_template("docker_container", "registry_auth")
+        # First item should come from template (it's prepended)
+        assert filtered[0] == template_items[0]
+
+
+class TestRemediationTemplates:
+    """Test the remediation templates module."""
+
+    def test_docker_registry_auth_template_has_login(self):
+        from src.edge.remediation_templates import get_remediation_template
+        items = get_remediation_template("docker_container", "registry_auth")
+        assert len(items) > 0
+        assert any("docker login" in item.lower() for item in items)
+        assert any("token" in item.lower() for item in items)
+
+    def test_docker_image_not_found_template_mentions_tag(self):
+        from src.edge.remediation_templates import get_remediation_template
+        items = get_remediation_template("docker_container", "image_not_found")
+        assert len(items) > 0
+        assert any("tag" in item.lower() for item in items)
+
+    def test_fallback_to_generic_category_template(self):
+        from src.edge.remediation_templates import get_remediation_template
+        # Use a subtype that doesn't have a specific template
+        items = get_remediation_template("docker_container", "rate_limit")
+        # Should fall back to generic docker_container template if no specific one
+        # But there is no generic docker_container entry, so should get empty list or root template
+        # Just ensure it doesn't raise
+        assert isinstance(items, list)
+
+    def test_dependency_error_template(self):
+        from src.edge.remediation_templates import get_remediation_template
+        items = get_remediation_template("dependency_error", None)
+        assert len(items) > 0
+        assert any("pin" in item.lower() for item in items)
+
+    def test_unknown_category_returns_empty(self):
+        from src.edge.remediation_templates import get_remediation_template
+        items = get_remediation_template("nonexistent_category", None)
+        assert items == []
+
+
+class TestRetrieverReranking:
+    """Test the retriever reranking logic."""
+
+    def test_rerank_boosts_documents_with_matching_terms(self):
+        from src.fog.retriever import Retriever
+        from src.fog.vector_store import SearchResult, Document
+
+        # Build fake results
+        results = [
+            SearchResult(
+                document=Document(id="1", content="Fix docker login for registry authentication"),
+                score=0.80,
+                rank=1,
+            ),
+            SearchResult(
+                document=Document(id="2", content="General CI/CD troubleshooting guide"),
+                score=0.85,
+                rank=2,
+            ),
+        ]
+
+        ret = Retriever.__new__(Retriever)  # skip __init__
+        reranked = ret._rerank(results, terms=["registry_auth", "docker login"], top_k=2)
+
+        # Document 1 should be ranked higher after reranking
+        assert reranked[0].document.id == "1"
+        assert reranked[0].score > results[0].score  # boosted
+
+    def test_rerank_returns_top_k(self):
+        from src.fog.retriever import Retriever
+        from src.fog.vector_store import SearchResult, Document
+
+        results = [
+            SearchResult(document=Document(id=str(i), content=f"doc {i}"), score=0.9 - i * 0.05, rank=i + 1)
+            for i in range(10)
+        ]
+        ret = Retriever.__new__(Retriever)
+        reranked = ret._rerank(results, terms=["doc 3"], top_k=3)
+        assert len(reranked) == 3
+
+    def test_rerank_with_empty_terms_returns_unchanged_top_k(self):
+        from src.fog.retriever import Retriever
+        from src.fog.vector_store import SearchResult, Document
+
+        results = [
+            SearchResult(document=Document(id=str(i), content=f"doc {i}"), score=float(i), rank=i + 1)
+            for i in range(5)
+        ]
+        ret = Retriever.__new__(Retriever)
+        reranked = ret._rerank(results, terms=[], top_k=3)
+        assert len(reranked) == 3

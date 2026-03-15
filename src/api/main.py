@@ -67,6 +67,8 @@ class HistoryItem(BaseModel):
 _start_time = time.time()
 _debug_history: list[dict] = []  # In-memory session history
 _history_counter = 0
+_INDEX_PATH = "data/faiss_index/index.faiss"
+_METADATA_PATH = "data/faiss_index/metadata.json"
 
 
 # --- Lifespan ---
@@ -124,11 +126,22 @@ async def debug_log(request: DebugRequest):
         from src.fog.retriever import Retriever
         from src.ops.evaluator import Evaluator
 
+        retriever = Retriever()
+        if request.enable_rag:
+            try:
+                retriever.load_index(_INDEX_PATH, _METADATA_PATH)
+            except FileNotFoundError:
+                logger.warning(
+                    "RAG enabled but FAISS index files were not found at %s and %s",
+                    _INDEX_PATH,
+                    _METADATA_PATH,
+                )
+
         # Initialize components
         agent = DebugAgent(
             llm_client=LLMClient(),
             classifier=FailureClassifier(),
-            retriever=Retriever(),
+            retriever=retriever,
             preprocessor=LogPreprocessor(),
             max_reasoning_steps=request.max_steps,
             enable_self_critique=request.enable_self_critique,

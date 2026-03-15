@@ -161,6 +161,40 @@ SOURCES = [
     ("prometheus_faq.md", "https://raw.githubusercontent.com/prometheus/docs/main/content/docs/introduction/faq.md"),
     # --- Grafana ---
     ("grafana_troubleshooting.md", "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/troubleshooting/_index.md"),
+
+    # =============================================
+    # GIT & VERSION CONTROL
+    # =============================================
+    ("git_merge.md", "https://raw.githubusercontent.com/git/git/master/Documentation/git-merge.txt"),
+    ("git_rebase.md", "https://raw.githubusercontent.com/git/git/master/Documentation/git-rebase.txt"),
+    ("git_submodule.md", "https://raw.githubusercontent.com/git/git/master/Documentation/git-submodule.txt"),
+    ("git_lfs_install.md", "https://raw.githubusercontent.com/git-lfs/git-lfs/main/docs/man/git-lfs-install.adoc"),
+
+    # =============================================
+    # DOCKER BEST PRACTICES
+    # =============================================
+    ("docker_best_practices.md", "https://raw.githubusercontent.com/docker/docs/main/content/build/building/best-practices.md"),
+    ("docker_multi_stage.md", "https://raw.githubusercontent.com/docker/docs/main/content/build/building/multi-stage.md"),
+    ("dockerfile_reference.md", "https://raw.githubusercontent.com/docker/docs/main/content/reference/dockerfile.md"),
+
+    # =============================================
+    # GITHUB ACTIONS (ADVANCED)
+    # =============================================
+    ("gha_troubleshooting.md", "https://raw.githubusercontent.com/github/docs/main/content/actions/monitoring-and-troubleshooting-workflows/troubleshooting-workflows.md"),
+    ("gha_workflow_syntax.md", "https://raw.githubusercontent.com/github/docs/main/content/actions/writing-workflows/workflow-syntax-for-github-actions.md"),
+    ("gha_secrets.md", "https://raw.githubusercontent.com/github/docs/main/content/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions.md"),
+
+    # =============================================
+    # SSL / TLS / CERTIFICATES
+    # =============================================
+    ("certbot_faq.md", "https://raw.githubusercontent.com/certbot/certbot/master/certbot/docs/faq.rst"),
+    ("mkcert_readme.md", "https://raw.githubusercontent.com/FiloSottile/mkcert/master/README.md"),
+
+    # =============================================
+    # GO MODULES
+    # =============================================
+    ("go_modules_ref.md", "https://raw.githubusercontent.com/golang/go/master/src/cmd/go/internal/modload/help.go"),
+    ("go_modules_faq.md", "https://raw.githubusercontent.com/golang/go/master/src/cmd/go/testdata/mod/README"),
 ]
 
 

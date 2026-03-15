@@ -1,0 +1,344 @@
+{
+  "timestamp": "2026-02-28 21:04:38",
+  "summary": {
+    "total_tests": 47,
+    "passed": 40,
+    "failed": 7,
+    "pass_rate": "85.1%"
+  },
+  "retrieval": [
+    {
+      "name": "Python missing module",
+      "passed": false,
+      "score": 0.0,
+      "latency_ms": 8496.41,
+      "details": "keywords=0/3, top_sim=0.705"
+    },
+    {
+      "name": "npm peer dependency conflict",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 9.42,
+      "details": "keywords=3/3, top_sim=0.828"
+    },
+    {
+      "name": "pip version not found",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 8.53,
+      "details": "keywords=3/3, top_sim=0.868"
+    },
+    {
+      "name": "Docker COPY failure",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 7.89,
+      "details": "keywords=3/3, top_sim=0.829"
+    },
+    {
+      "name": "C/C++ linker error",
+      "passed": true,
+      "score": 0.6666666666666666,
+      "latency_ms": 8.96,
+      "details": "keywords=2/3, top_sim=0.780"
+    },
+    {
+      "name": "Webpack module resolution failure",
+      "passed": true,
+      "score": 0.6666666666666666,
+      "latency_ms": 9.26,
+      "details": "keywords=2/3, top_sim=0.789"
+    },
+    {
+      "name": "pytest assertion failure",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 10.92,
+      "details": "keywords=3/3, top_sim=0.689"
+    },
+    {
+      "name": "Jest test failure",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 12.03,
+      "details": "keywords=3/3, top_sim=0.638"
+    },
+    {
+      "name": "Python version mismatch",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 9.23,
+      "details": "keywords=3/3, top_sim=0.839"
+    },
+    {
+      "name": "Missing environment variable",
+      "passed": true,
+      "score": 0.5,
+      "latency_ms": 8.23,
+      "details": "keywords=1/2, top_sim=0.670"
+    },
+    {
+      "name": "Job timeout",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 8.63,
+      "details": "keywords=3/3, top_sim=0.689"
+    },
+    {
+      "name": "File permission denied",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 9.68,
+      "details": "keywords=2/2, top_sim=0.961"
+    },
+    {
+      "name": "Registry auth failure",
+      "passed": false,
+      "score": 0.3333333333333333,
+      "latency_ms": 7.5,
+      "details": "keywords=1/3, top_sim=0.674"
+    },
+    {
+      "name": "Python syntax error",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 8.44,
+      "details": "keywords=2/2, top_sim=0.783"
+    },
+    {
+      "name": "Container OOM kill",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 7.47,
+      "details": "keywords=3/3, top_sim=0.673"
+    },
+    {
+      "name": "Docker image not found",
+      "passed": true,
+      "score": 0.6666666666666666,
+      "latency_ms": 11.93,
+      "details": "keywords=2/3, top_sim=0.510"
+    },
+    {
+      "name": "K8s CrashLoopBackOff",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 8.15,
+      "details": "keywords=3/3, top_sim=0.768"
+    },
+    {
+      "name": "K8s image pull failure",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 8.85,
+      "details": "keywords=3/3, top_sim=0.662"
+    },
+    {
+      "name": "Git credential failure",
+      "passed": false,
+      "score": 0.3333333333333333,
+      "latency_ms": 8.86,
+      "details": "keywords=1/3, top_sim=0.690"
+    },
+    {
+      "name": "Git push rejected",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 12.59,
+      "details": "keywords=3/3, top_sim=0.494"
+    },
+    {
+      "name": "SSL certificate error",
+      "passed": true,
+      "score": 0.6666666666666666,
+      "latency_ms": 9.03,
+      "details": "keywords=2/3, top_sim=0.698"
+    },
+    {
+      "name": "Connection refused",
+      "passed": true,
+      "score": 0.5,
+      "latency_ms": 9.74,
+      "details": "keywords=1/2, top_sim=0.561"
+    },
+    {
+      "name": "JS heap OOM",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 8.79,
+      "details": "keywords=3/3, top_sim=0.761"
+    },
+    {
+      "name": "Disk full",
+      "passed": true,
+      "score": 0.6666666666666666,
+      "latency_ms": 8.26,
+      "details": "keywords=2/3, top_sim=0.519"
+    },
+    {
+      "name": "CI cache miss",
+      "passed": false,
+      "score": 0.0,
+      "latency_ms": 8.91,
+      "details": "keywords=0/3, top_sim=0.668"
+    },
+    {
+      "name": "Missing CI secret",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 8.93,
+      "details": "keywords=3/3, top_sim=0.703"
+    },
+    {
+      "name": "GHA workflow syntax error",
+      "passed": true,
+      "score": 1.0,
+      "latency_ms": 8.48,
+      "details": "keywords=3/3, top_sim=0.735"
+    }
+  ],
+  "classification": [
+    {
+      "name": "classify_dependency_error_1",
+      "passed": true,
+      "score": 0.697,
+      "latency_ms": 0.13,
+      "details": "expected=dependency_error, got=dependency_error"
+    },
+    {
+      "name": "classify_dependency_error_2",
+      "passed": true,
+      "score": 0.697,
+      "latency_ms": 0.07,
+      "details": "expected=dependency_error, got=dependency_error"
+    },
+    {
+      "name": "classify_syntax_error_3",
+      "passed": true,
+      "score": 0.697,
+      "latency_ms": 0.07,
+      "details": "expected=syntax_error, got=syntax_error"
+    },
+    {
+      "name": "classify_syntax_error_4",
+      "passed": true,
+      "score": 0.5,
+      "latency_ms": 0.1,
+      "details": "expected=syntax_error, got=syntax_error"
+    },
+    {
+      "name": "classify_env_mismatch_5",
+      "passed": true,
+      "score": 0.706,
+      "latency_ms": 0.08,
+      "details": "expected=env_mismatch, got=env_mismatch"
+    },
+    {
+      "name": "classify_build_failure_6",
+      "passed": true,
+      "score": 0.697,
+      "latency_ms": 0.08,
+      "details": "expected=build_failure, got=build_failure"
+    },
+    {
+      "name": "classify_test_failure_7",
+      "passed": true,
+      "score": 0.851,
+      "latency_ms": 0.1,
+      "details": "expected=test_failure, got=test_failure"
+    },
+    {
+      "name": "classify_timeout_8",
+      "passed": true,
+      "score": 0.767,
+      "latency_ms": 0.13,
+      "details": "expected=timeout, got=timeout"
+    },
+    {
+      "name": "classify_permission_error_9",
+      "passed": true,
+      "score": 0.697,
+      "latency_ms": 0.09,
+      "details": "expected=permission_error, got=permission_error"
+    },
+    {
+      "name": "classify_permission_error_10",
+      "passed": true,
+      "score": 0.8,
+      "latency_ms": 0.06,
+      "details": "expected=permission_error, got=permission_error"
+    },
+    {
+      "name": "classify_build_failure_11",
+      "passed": true,
+      "score": 0.767,
+      "latency_ms": 0.07,
+      "details": "expected=build_failure, got=build_failure"
+    },
+    {
+      "name": "classify_dependency_error_12",
+      "passed": true,
+      "score": 0.697,
+      "latency_ms": 0.07,
+      "details": "expected=dependency_error, got=dependency_error"
+    }
+  ],
+  "end_to_end": [
+    {
+      "name": "Python dep error",
+      "passed": true,
+      "score": 0.697,
+      "latency_ms": 3604.49,
+      "details": "category=dependency_error, docs=5, context_len=673"
+    },
+    {
+      "name": "Docker build fail",
+      "passed": true,
+      "score": 0.697,
+      "latency_ms": 10.78,
+      "details": "category=build_failure, docs=5, context_len=1106"
+    },
+    {
+      "name": "Test failure",
+      "passed": true,
+      "score": 0.828,
+      "latency_ms": 10.11,
+      "details": "category=test_failure, docs=5, context_len=863"
+    },
+    {
+      "name": "Timeout error",
+      "passed": true,
+      "score": 0.811,
+      "latency_ms": 9.83,
+      "details": "category=timeout, docs=5, context_len=1940"
+    },
+    {
+      "name": "Permission error",
+      "passed": true,
+      "score": 0.811,
+      "latency_ms": 10.72,
+      "details": "category=permission_error, docs=5, context_len=478"
+    },
+    {
+      "name": "SSL error",
+      "passed": false,
+      "score": 0.0,
+      "latency_ms": 9.94,
+      "details": "category=unknown, docs=5, context_len=383"
+    },
+    {
+      "name": "OOM error",
+      "passed": false,
+      "score": 0.0,
+      "latency_ms": 9.59,
+      "details": "category=unknown, docs=5, context_len=369"
+    },
+    {
+      "name": "Git auth fail",
+      "passed": false,
+      "score": 0.0,
+      "latency_ms": 9.85,
+      "details": "category=unknown, docs=5, context_len=403"
+    }
+  ]
+}

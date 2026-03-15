@@ -1,0 +1,51 @@
+:root {
+  --bg: #060d16;
+  --bg-2: #0a1a2b;
+  --card: rgba(9, 24, 40, 0.62);
+  --card-border: rgba(90, 225, 255, 0.25);
+  --text: #d8f1ff;
+  --muted: #7ba2bb;
+  --accent: #2de0ff;
+  --accent-2: #00b7e8;
+  --danger: #ff6f7f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  font-family: "Space Grotesk", "Segoe UI", "Trebuchet MS", sans-serif;
+  background:
+    radial-gradient(circle at 15% 5%, rgba(0, 190, 255, 0.22), transparent 32%),
+    radial-gradient(circle at 90% 18%, rgba(45, 224, 255, 0.17), transparent 38%),
+    linear-gradient(140deg, var(--bg), var(--bg-2));
+  background-attachment: fixed;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding-left: 1.2rem;
+}

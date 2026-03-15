@@ -122,10 +122,10 @@ The system follows an **Edge–Fog–Cloud** architecture inspired by edge compu
 │  └───────────────────────────────────────────────────────┘   │
 │                                                               │
 │  ┌────────────────────┐    ┌────────────────────────────┐    │
-│  │   FastAPI Backend   │    │    Streamlit Frontend       │    │
-│  │  /api/debug         │◀──│  Interactive debugging UI    │    │
-│  │  /api/health        │    │  Sample logs + live results │    │
-│  │  /api/history       │    │  Evaluation dashboard       │    │
+│  │   FastAPI Backend   │    │   React Frontend (Vite)    │    │
+│  │  /api/debug         │◀──│  Dashboard / Analyze / KB   │    │
+│  │  /api/health        │    │  History + reasoning trace  │    │
+│  │  /api/history       │    │  API-connected UI           │    │
 │  └────────────────────┘    └────────────────────────────┘    │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -158,7 +158,11 @@ devops-copilot/
 │   ├── Dockerfile.fog             # Fog layer container
 │   └── Dockerfile.cloud           # Cloud layer container
 ├── frontend/
-│   └── app.py                     # Streamlit interactive UI
+│   └── app.py                     # Legacy Streamlit UI (optional)
+├── web/
+│   ├── src/                       # React + TypeScript frontend source
+│   ├── package.json               # Frontend scripts and dependencies
+│   └── vite.config.ts             # Vite dev/build config
 ├── scripts/
 │   ├── collect_logs.py            # Fetch & generate sample CI/CD logs
 │   ├── build_index.py             # Build FAISS index from documents
@@ -204,7 +208,7 @@ devops-copilot/
 | **RAG** | Custom retrieval pipeline | Embed → Search → Format context |
 | **Agent** | Custom multi-step reasoning | Classify → Retrieve → Reason → Critique → Finalize |
 | **Backend** | FastAPI | Async REST API with Pydantic validation |
-| **Frontend** | Streamlit | Interactive debugging dashboard |
+| **Frontend** | React + Vite (TypeScript) | Multi-view debugging dashboard |
 | **Tracking** | MLflow | Experiment logging with params/metrics/artifacts |
 | **CI/CD** | GitHub Actions | Lint (ruff) → Test (pytest) → Docker build |
 | **Container** | Docker + Docker Compose | Multi-service deployment |
@@ -248,13 +252,15 @@ cp .env.example .env
 python scripts/build_index.py
 
 # 2. Start the API server
-uvicorn src.api.main:app --reload --port 8000
+uvicorn src.api.main:app --reload --port 8086
 
-# 3. Start the Streamlit frontend (in another terminal)
-streamlit run frontend/app.py
+# 3. Start the React frontend (in another terminal)
+cd web
+npm install
+npm run dev
 ```
 
-Then open **http://localhost:8501** in your browser, paste a CI/CD failure log, and click **🚀 Analyze Failure**.
+Then open **http://localhost:5173** in your browser, paste a CI/CD failure log, and click **Analyze Failure**.
 
 ---
 
@@ -264,7 +270,7 @@ Then open **http://localhost:8501** in your browser, paste a CI/CD failure log, 
 
 ```bash
 docker build -t devops-copilot .
-docker run -p 8000:8000 -e HUGGINGFACE_API_TOKEN=your_token devops-copilot
+docker run -p 8086:8000 -e HUGGINGFACE_API_TOKEN=your_token devops-copilot
 ```
 
 ### Full Stack (Edge + Fog + Cloud + Frontend)
@@ -335,14 +341,39 @@ Returns MLflow experiment metrics summary.
 
 ## 🖥️ Frontend
 
-The Streamlit frontend provides:
+The project now includes a production-style React frontend in `web/` (Vite + TypeScript), with a modern multi-view interface:
 
-- **Log Input Panel** — paste raw logs or select from built-in sample logs (Python ImportError, Docker build failure, pytest failure)
-- **Configuration Sidebar** — toggle RAG, self-critique, and adjust max reasoning steps
-- **Live Analysis Results** — classification badge, diagnosis, numbered fix suggestions, patch recommendations
-- **Reasoning Trace** — expandable view of every agent step (classify → retrieve → reason → critique → finalize)
-- **Evaluation Metrics** — relevance, completeness, and actionability scores
-- **Analysis History** — sidebar shows past debugging sessions
+- **Dashboard** — analysis metrics, top categories, and recent activity timeline
+- **Analyze** — split-pane workflow for raw logs and live AI diagnosis output
+- **Knowledge Base** — source overview for retrieval corpus
+- **History** — table of recent debugging sessions
+
+### Frontend Commands
+
+```bash
+# Start frontend dev server
+cd web
+npm install
+npm run dev
+
+# Build production assets
+npm run build
+```
+
+The app connects to FastAPI via configurable backend URL (default: `http://127.0.0.1:8086`).
+
+### Recommended Local Run Combo
+
+Terminal 1 (API):
+```bash
+uvicorn src.api.main:app --host 127.0.0.1 --port 8086
+```
+
+Terminal 2 (Frontend):
+```bash
+cd web
+npm run dev -- --host 127.0.0.1 --port 5173
+```
 
 ---
 
@@ -413,7 +444,7 @@ python scripts/evaluate.py
 | Service | Platform | Tier |
 |---------|----------|------|
 | Backend API | [Render](https://render.com) | Free |
-| Frontend | [Streamlit Cloud](https://streamlit.io/cloud) | Free |
+| Frontend | [Vercel](https://vercel.com) or [Netlify](https://www.netlify.com) | Free |
 | LLM Inference | [HuggingFace Inference API](https://huggingface.co/inference-api) | Free |
 
 Deployment is configured via `render.yaml` for Render and GitHub Actions for CI/CD.
@@ -460,7 +491,7 @@ Environment variables (`.env`):
 ```
 HUGGINGFACE_API_TOKEN=hf_your_token_here
 LOG_LEVEL=INFO
-PORT=8000
+PORT=8086
 ```
 
 ---

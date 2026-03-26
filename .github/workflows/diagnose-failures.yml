@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -e . --quiet || pip install -r requirements.txt --quiet 2>/dev/null || true
+          pip install -r requirements.txt --quiet
           pip install requests --quiet
 
       - name: Build and start Copilot API
@@ -41,10 +41,7 @@ jobs:
         run: |
           echo "Starting Copilot API..."
           python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000 > api.log 2>&1 &
-          API_PID=$!
-          echo "API_PID=$API_PID" >> $GITHUB_ENV
           
-          # Wait for API to start (with timeout)
           for i in {1..30}; do
             if curl -s http://127.0.0.1:8000/api/health > /dev/null 2>&1; then
               echo "API is ready!"
@@ -65,9 +62,6 @@ jobs:
         id: diagnose
         if: steps.start-api.outputs.api-ready == 'true'
         run: |
-          echo "Looking for artifacts..."
-          find artifacts -type f | head -20 || echo "No artifacts found"
-          
           echo "Running diagnosis..."
           python scripts/diagnose_workflow_failure.py \
             --artifacts-dir artifacts \
@@ -92,7 +86,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'open',
-              head: `${context.repo.owner}:${branch}`
+              head: branch
             });
             
             if (prs.data.length > 0) {
@@ -111,7 +105,6 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const path = require('path');
             
             if (!fs.existsSync('diagnosis_result.json')) {
               console.log('No diagnosis result found, skipping comment');
@@ -126,36 +119,28 @@ jobs:
               return;
             }
             
-            const issueType = diagnosis.classification?.category || 'Unknown';
+            const issue_type = diagnosis.classification?.category || 'Unknown';
             const confidence = ((diagnosis.confidence || 0) * 100).toFixed(1);
             const latency = diagnosis.total_latency_ms || 'N/A';
             const diagnosis_text = diagnosis.diagnosis || 'Unable to determine root cause';
-            const suggestions = (diagnosis.fix_suggestions || []).slice(0, 5).map((s, i) => `${i + 1}. ${s}`).join('\\n');
+            const suggestions = (diagnosis.fix_suggestions || []).slice(0, 5);
             const patch = diagnosis.patch_recommendation || '';
             
-            let comment = `## 🔍 Automated CI/CD Failure Diagnosis
-
-**Issue Type:** ${issueType}
-
-### Root Cause
-${diagnosis_text}
-
-### Suggested Fixes
-${suggestions || 'No suggestions available'}
-`;
+            let comment = `## 🔍 Automated CI/CD Failure Diagnosis\n\n`;
+            comment += `**Issue Type:** ${issue_type}\n\n`;
+            comment += `### Root Cause\n${diagnosis_text}\n\n`;
+            comment += `### Suggested Fixes\n`;
             
-            if (patch && patch.length < 500) {
-              comment += `
-### Recommended Patch
-\`\`\`
-${patch}
-\`\`\`
-`;
+            for (let i = 0; i < suggestions.length; i++) {
+              comment += `${i + 1}. ${suggestions[i]}\n`;
             }
             
-            comment += `
-**Confidence:** ${confidence}%  
-**Analysis Time:** ${latency}ms`;
+            if (patch && patch.length < 500) {
+              comment += `\n### Recommended Patch\n\`\`\`\n${patch}\n\`\`\`\n`;
+            }
+            
+            comment += `\n**Confidence:** ${confidence}%  \n`;
+            comment += `**Analysis Time:** ${latency}ms`;
             
             try {
               await github.rest.issues.createComment({
@@ -164,9 +149,9 @@ ${patch}
                 repo: context.repo.repo,
                 body: comment
               });
-              console.log('✓ Posted diagnosis comment to PR #${{ steps.find-pr.outputs.pr-number }}');
+              console.log('Posted diagnosis comment');
             } catch (e) {
-              console.log('✗ Failed to post comment:', e.message);
+              console.log('Could not post comment:', e.message);
             }
 
       - name: Stop Copilot API

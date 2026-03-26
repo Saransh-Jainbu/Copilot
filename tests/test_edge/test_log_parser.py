@@ -3,7 +3,7 @@ Tests for Edge Layer: Log Parser
 """
 
 import pytest
-from src.edge.log_parser import LogParser, ParsedLog
+from src.edge.log_parser import LogParser
 
 
 @pytest.fixture

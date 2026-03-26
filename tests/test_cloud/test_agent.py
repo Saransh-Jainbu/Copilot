@@ -4,10 +4,9 @@ Uses fully mocked LLM, classifier, and retriever to test agent logic.
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
-from dataclasses import dataclass
+from unittest.mock import MagicMock
 
-from src.cloud.agent import DebugAgent, DebugResult, AgentStep, AgentAction
+from src.cloud.agent import DebugAgent, DebugResult, AgentStep
 from src.edge.classifier import ClassificationResult
 from src.edge.log_parser import ParsedLog
 from src.fog.retriever import RetrievalResult
@@ -118,7 +117,7 @@ class TestDebugAgent:
         )
 
         log = "SyntaxError: invalid syntax"
-        result = agent.debug(log)
+        agent.debug(log)
 
         # Should have called classifier and retriever
         mock_classifier.classify.assert_called_once()

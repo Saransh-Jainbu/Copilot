@@ -6,6 +6,7 @@ Wrapper around HuggingFace Inference API for LLM inference.
 import logging
 import os
 import time
+from collections import OrderedDict
 from typing import Optional
 
 import requests
@@ -52,10 +53,10 @@ class LLMClient:
         primary_model: str = "mistralai/Mistral-7B-Instruct-v0.3",
         fallback_model: str = "microsoft/phi-2",
         api_token: Optional[str] = None,
-        max_tokens: int = 512,
+        max_tokens: int = 320,
         temperature: float = 0.3,
-        timeout: int = 25,
-        max_retries: int = 2,
+        timeout: int = 18,
+        max_retries: int = 1,
     ):
         self.primary_model = os.getenv("HF_PRIMARY_MODEL", primary_model)
         self.fallback_model = os.getenv("HF_FALLBACK_MODEL", fallback_model)
@@ -64,6 +65,9 @@ class LLMClient:
         self.temperature = _env_float("HF_TEMPERATURE", temperature)
         self.timeout = _env_int("HF_TIMEOUT_SECONDS", timeout)
         self.max_retries = _env_int("HF_MAX_RETRIES", max_retries)
+        self.response_cache_size = _env_int("HF_RESPONSE_CACHE_SIZE", 64)
+        self.session = requests.Session()
+        self._response_cache: OrderedDict[tuple[str, str, int, float], dict] = OrderedDict()
 
         if not self.api_token:
             logger.warning(
@@ -94,12 +98,24 @@ class LLMClient:
         """
         model = model or self.primary_model
         start_time = time.time()
+        requested_tokens = max_tokens or self.max_tokens
+        requested_temperature = temperature or self.temperature
+        cache_key = (model, prompt, requested_tokens, requested_temperature)
+
+        cached_response = self._response_cache.get(cache_key)
+        if cached_response is not None:
+            self._response_cache.move_to_end(cache_key)
+            return {
+                **cached_response,
+                "latency_ms": round((time.time() - start_time) * 1000),
+                "cached": True,
+            }
 
         payload = {
             "model": model,
             "prompt": prompt,
-            "max_tokens": max_tokens or self.max_tokens,
-            "temperature": temperature or self.temperature,
+            "max_tokens": requested_tokens,
+            "temperature": requested_temperature,
         }
 
         # Try primary model with retries.
@@ -123,13 +139,23 @@ class LLMClient:
                 "error": True,
             }
 
-        return {
+        response_data = {
             "text": response_text.strip(),
             "model": model,
             "latency_ms": elapsed_ms,
             "tokens_used": self._estimate_tokens(response_text),
             "error": False,
         }
+        self._response_cache[cache_key] = {
+            "text": response_data["text"],
+            "model": response_data["model"],
+            "tokens_used": response_data["tokens_used"],
+            "error": response_data["error"],
+        }
+        self._response_cache.move_to_end(cache_key)
+        if len(self._response_cache) > self.response_cache_size:
+            self._response_cache.popitem(last=False)
+        return response_data
 
     def _call_api(self, model: str, payload: dict) -> Optional[str]:
         """Call the HuggingFace Inference API with retry logic.
@@ -145,7 +171,7 @@ class LLMClient:
 
         for attempt in range(1, self.max_retries + 1):
             try:
-                response = requests.post(
+                response = self.session.post(
                     url,
                     headers=self.headers,
                     json=payload,

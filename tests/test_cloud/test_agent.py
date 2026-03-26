@@ -160,6 +160,27 @@ class TestAgentHelpers:
         assert len(suggestions) >= 3
         assert "Install numpy" in suggestions[0]
 
+    def test_extract_suggestions_ignores_numbered_root_cause_section(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        text = (
+            "## Root Cause Diagnosis\n"
+            "1. Error Type: InternalError\n"
+            "2. Subsystem: Kubernetes API\n"
+            "## Fix Suggestions\n"
+            "1. Patch the webhook caBundle\n"
+            "2. Regenerate ingress-nginx admission cert\n"
+            "## Patch Recommendation\n"
+            "- Update ValidatingWebhookConfiguration\n"
+        )
+        suggestions = agent._extract_suggestions(text)
+        assert suggestions[0].startswith("Patch the webhook caBundle")
+        assert all("Error Type" not in s for s in suggestions)
+
     def test_extract_patch(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
         agent = DebugAgent(
             llm_client=mock_llm,
@@ -229,6 +250,17 @@ class TestAgentHelpers:
         prompt_template = agent._select_diagnosis_prompt("docker_container", parsed)
         assert "Docker registry authentication failure" in prompt_template
 
+    def test_select_diagnosis_prompt_for_k8s_ingress_admission_cert(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        parsed = ParsedLog(metadata={"network_ssl_subtype": "k8s_ingress_admission_cert"})
+        prompt_template = agent._select_diagnosis_prompt("network_ssl", parsed)
+        assert "admission webhook TLS failures" in prompt_template
+
     def test_select_generic_prompt_for_non_docker(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
         agent = DebugAgent(
             llm_client=mock_llm,
@@ -273,6 +305,23 @@ class TestAgentHelpers:
         filtered = agent._filter_suggestions(["Check Dockerfile syntax issues"], parsed)
         assert len(filtered) >= 1
         assert any("docker login" in s.lower() for s in filtered)
+
+    def test_filter_k8s_ingress_admission_suggestions_uses_template(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        parsed = ParsedLog(
+            metadata={
+                "category": "network_ssl",
+                "network_ssl_subtype": "k8s_ingress_admission_cert",
+            }
+        )
+        filtered = agent._filter_suggestions([], parsed)
+        assert len(filtered) >= 1
+        assert any("caBundle" in s for s in filtered)
 
 
 # ---- Data Class Tests ----

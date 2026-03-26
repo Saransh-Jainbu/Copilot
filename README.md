@@ -160,9 +160,16 @@ Then open http://127.0.0.1:5173.
 
 Notes:
 
-- The React app defaults to backend URL http://127.0.0.1:8086 and stores it in localStorage.
-- You can change backend URL from the Analyze view input field.
+- The React app auto-detects a healthy backend on startup (tries localStorage, env override, and common localhost ports).
+- You can still change backend URL from the Analyze view input field.
+- To pin backend URL at build/dev time, set VITE_API_URL in web/.env.local.
 - API health check: GET http://127.0.0.1:8086/api/health
+
+Example web/.env.local:
+
+```env
+VITE_API_URL=http://127.0.0.1:8086
+```
 
 ## Build Frontend
 

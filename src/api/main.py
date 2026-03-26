@@ -29,7 +29,7 @@ class DebugRequest(BaseModel):
     """Request body for the /api/debug endpoint."""
     log_text: str = Field(..., min_length=10, description="Raw CI/CD failure log text")
     enable_rag: bool = Field(True, description="Enable RAG retrieval")
-    enable_self_critique: bool = Field(True, description="Enable agent self-critique")
+    enable_self_critique: bool = Field(False, description="Enable agent self-critique")
     max_steps: int = Field(5, ge=1, le=10, description="Max reasoning steps")
 
 
@@ -69,6 +69,72 @@ _debug_history: list[dict] = []  # In-memory session history
 _history_counter = 0
 _INDEX_PATH = "data/faiss_index/index.faiss"
 _METADATA_PATH = "data/faiss_index/metadata.json"
+_HISTORY_LIMIT = 50
+_shared_llm_client = None
+_shared_classifier = None
+_shared_preprocessor = None
+_shared_retriever = None
+_retriever_index_loaded = False
+
+
+def _get_llm_client():
+    global _shared_llm_client
+    if _shared_llm_client is None:
+        from src.cloud.llm_client import LLMClient
+        _shared_llm_client = LLMClient()
+    return _shared_llm_client
+
+
+def _get_classifier():
+    global _shared_classifier
+    if _shared_classifier is None:
+        from src.edge.classifier import FailureClassifier
+        _shared_classifier = FailureClassifier()
+    return _shared_classifier
+
+
+def _get_preprocessor():
+    global _shared_preprocessor
+    if _shared_preprocessor is None:
+        from src.edge.preprocessor import LogPreprocessor
+        _shared_preprocessor = LogPreprocessor()
+    return _shared_preprocessor
+
+
+def _get_retriever(enable_rag: bool):
+    global _shared_retriever, _retriever_index_loaded
+    if _shared_retriever is None:
+        from src.fog.retriever import Retriever
+        _shared_retriever = Retriever()
+
+    if enable_rag and not _retriever_index_loaded:
+        try:
+            _shared_retriever.load_index(_INDEX_PATH, _METADATA_PATH)
+            _retriever_index_loaded = True
+        except FileNotFoundError:
+            logger.warning(
+                "RAG enabled but FAISS index files were not found at %s and %s",
+                _INDEX_PATH,
+                _METADATA_PATH,
+            )
+
+    return _shared_retriever
+
+
+def _append_history(response_data: DebugResponse) -> None:
+    global _history_counter
+    _history_counter += 1
+    _debug_history.append({
+        "id": _history_counter,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "classification_category": response_data.classification.get("category", "unknown"),
+        "confidence": response_data.confidence,
+        "diagnosis_preview": response_data.diagnosis[:200],
+        "total_latency_ms": response_data.total_latency_ms,
+        "full_result": response_data.model_dump() if hasattr(response_data, "model_dump") else None,
+    })
+    if len(_debug_history) > _HISTORY_LIMIT:
+        _debug_history.pop(0)
 
 
 # --- Lifespan ---
@@ -77,7 +143,16 @@ _METADATA_PATH = "data/faiss_index/metadata.json"
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
     logger.info("DevOps Copilot API starting up...")
-    # Initialize components here if needed in the future
+    _get_llm_client()
+    _get_classifier()
+    _get_preprocessor()
+    if os.getenv("PRELOAD_RAG_ON_STARTUP", "false").lower() == "true":
+        _get_retriever(enable_rag=True)
+    if os.getenv("PRELOAD_EMBEDDINGS_ON_STARTUP", "false").lower() == "true":
+        try:
+            _get_retriever(enable_rag=True).embeddings.model
+        except Exception as exc:
+            logger.warning("Embedding preload failed: %s", exc)
     yield
     logger.info("DevOps Copilot API shutting down...")
 
@@ -120,29 +195,14 @@ async def debug_log(request: DebugRequest):
     """
     try:
         from src.cloud.agent import DebugAgent
-        from src.cloud.llm_client import LLMClient
-        from src.edge.classifier import FailureClassifier
-        from src.edge.preprocessor import LogPreprocessor
-        from src.fog.retriever import Retriever
         from src.ops.evaluator import Evaluator
-
-        retriever = Retriever()
-        if request.enable_rag:
-            try:
-                retriever.load_index(_INDEX_PATH, _METADATA_PATH)
-            except FileNotFoundError:
-                logger.warning(
-                    "RAG enabled but FAISS index files were not found at %s and %s",
-                    _INDEX_PATH,
-                    _METADATA_PATH,
-                )
 
         # Initialize components
         agent = DebugAgent(
-            llm_client=LLMClient(),
-            classifier=FailureClassifier(),
-            retriever=retriever,
-            preprocessor=LogPreprocessor(),
+            llm_client=_get_llm_client(),
+            classifier=_get_classifier(),
+            retriever=_get_retriever(request.enable_rag),
+            preprocessor=_get_preprocessor(),
             max_reasoning_steps=request.max_steps,
             enable_self_critique=request.enable_self_critique,
         )
@@ -169,21 +229,7 @@ async def debug_log(request: DebugRequest):
             total_latency_ms=result.total_latency_ms,
         )
 
-        # Store in history
-        global _history_counter
-        _history_counter += 1
-        _debug_history.append({
-            "id": _history_counter,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "classification_category": result.classification.category,
-            "confidence": result.confidence,
-            "diagnosis_preview": result.diagnosis[:200],
-            "total_latency_ms": result.total_latency_ms,
-            "full_result": response_data.model_dump() if hasattr(response_data, 'model_dump') else None,
-        })
-        # Keep only last 50
-        if len(_debug_history) > 50:
-            _debug_history.pop(0)
+        _append_history(response_data)
 
         return response_data
 

@@ -5,6 +5,7 @@ Uses a multi-step reasoning workflow to analyze CI/CD failures.
 """
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -205,6 +206,45 @@ Provide:
 Format with clear headers and bullet points.
 """
 
+K8S_INGRESS_ADMISSION_CERT_PROMPT = """You are DevOps Copilot, an expert in Kubernetes admission webhook TLS failures.
+
+## Error Classification
+- **Type**: {error_type}
+- **Subtype**: {error_subtype}
+- **Confidence**: {confidence}
+
+## Exact Failing Evidence
+- **Primary Error**: {error_message}
+- **Error Lines**:
+{error_lines}
+- **Extracted Evidence**:
+{extracted_evidence}
+
+## Relevant Documentation & Similar Past Errors
+{retrieved_context}
+
+## Raw Error Section
+{error_section}
+
+## Task
+Produce a diagnosis specifically for ingress-nginx admission webhook certificate trust failures.
+
+Required reasoning constraints:
+- Explain this is a Kubernetes API server -> admission webhook TLS trust problem, not an app container/client cert problem.
+- Mention that `x509: certificate signed by unknown authority` usually means webhook certificate/caBundle drift or stale admission secret.
+- Mention the failing webhook/service name when present.
+- Prioritize fixes around ingress-nginx admission cert regeneration and ValidatingWebhookConfiguration caBundle patch.
+
+Do not suggest generic client certificate replacement unless log evidence explicitly indicates client-auth TLS.
+
+Provide:
+1. **Root Cause Diagnosis**
+2. **Fix Suggestions**: 3-5 highly specific kubectl/helm-oriented steps
+3. **Patch Recommendation**: concrete commands or manifest fields (caBundle, webhook config, ingress-nginx admission secret)
+
+Format with clear headers and bullet points.
+"""
+
 SELF_CRITIQUE_PROMPT = """You are reviewing a debugging analysis for accuracy and completeness.
 
 ## Original Error
@@ -277,7 +317,7 @@ class DebugAgent:
         retriever: Retriever | None = None,
         preprocessor: LogPreprocessor | None = None,
         max_reasoning_steps: int = 5,
-        enable_self_critique: bool = True,
+        enable_self_critique: bool = False,
         low_confidence_threshold: float = 0.45,
     ):
         self.llm = llm_client or LLMClient()
@@ -287,6 +327,11 @@ class DebugAgent:
         self.max_reasoning_steps = max_reasoning_steps
         self.enable_self_critique = enable_self_critique
         self.low_confidence_threshold = low_confidence_threshold
+        self.max_context_results = max(int(os.getenv("AGENT_MAX_CONTEXT_RESULTS", "3")), 1)
+        self.max_context_chars = max(int(os.getenv("AGENT_MAX_CONTEXT_CHARS", "2000")), 500)
+        self.max_error_section_chars = max(int(os.getenv("AGENT_MAX_ERROR_SECTION_CHARS", "2000")), 500)
+        self.max_diagnosis_tokens = max(int(os.getenv("AGENT_MAX_DIAGNOSIS_TOKENS", "320")), 64)
+        self.max_critique_tokens = max(int(os.getenv("AGENT_MAX_CRITIQUE_TOKENS", "96")), 32)
 
     def debug(self, raw_log: str) -> DebugResult:
         """Run the full debugging pipeline on a raw CI/CD log.
@@ -318,6 +363,9 @@ class DebugAgent:
         step_num += 1
         step_start = time.time()
         classification = self.classifier.classify(cleaned_log)
+        if classification.parsed_log and isinstance(classification.parsed_log.metadata, dict):
+            # Persist category so suggestion templates can be applied consistently.
+            classification.parsed_log.metadata["category"] = classification.category
         trace.append(AgentStep(
             step_number=step_num,
             action=AgentAction.CLASSIFY.value,
@@ -333,7 +381,7 @@ class DebugAgent:
         query = self._build_retrieval_query(classification, cleaned_log)
         rerank_terms = self._build_rerank_terms(classification)
         retrieval = self.retriever.retrieve(query, rerank_terms=rerank_terms)
-        context_str = retrieval.to_context_string()
+        context_str = retrieval.to_context_string(max_results=self.max_context_results)
         trace.append(AgentStep(
             step_number=step_num,
             action=AgentAction.RETRIEVE.value,
@@ -354,7 +402,7 @@ class DebugAgent:
             error_section=error_section,
         )
 
-        llm_response = self.llm.generate(prompt)
+        llm_response = self.llm.generate(prompt, max_tokens=self.max_diagnosis_tokens)
         diagnosis_text = llm_response["text"]
         trace.append(AgentStep(
             step_number=step_num,
@@ -374,7 +422,10 @@ class DebugAgent:
                 error_summary=f"{classification.category}: {parsed.error_message if parsed else 'N/A'}",
                 diagnosis=diagnosis_text[:1500],
             )
-            critique_response = self.llm.generate(critique_prompt)
+            critique_response = self.llm.generate(
+                critique_prompt,
+                max_tokens=self.max_critique_tokens,
+            )
             critique_text = critique_response["text"]
 
             if "APPROVED" in critique_text.upper():
@@ -495,7 +546,8 @@ class DebugAgent:
         """Extract a normalized subtype string from parsed metadata."""
         if not parsed:
             return "N/A"
-        return parsed.metadata.get("docker_subtype", "N/A")
+        metadata = parsed.metadata if hasattr(parsed, "metadata") and isinstance(parsed.metadata, dict) else {}
+        return metadata.get("docker_subtype") or metadata.get("network_ssl_subtype") or "N/A"
 
     def _build_diagnosis_prompt(
         self,
@@ -510,10 +562,10 @@ class DebugAgent:
             error_type=classification.category,
             confidence=classification.confidence,
             error_message=parsed.error_message if parsed else "N/A",
-            error_lines="\n".join(parsed.error_lines[:10]) if parsed else "N/A",
+            error_lines="\n".join(parsed.error_lines[:6]) if parsed else "N/A",
             extracted_evidence=self._format_extracted_evidence(parsed),
-            retrieved_context=retrieved_context,
-            error_section=error_section[:4000] if error_section else "N/A",
+            retrieved_context=self._truncate_text(retrieved_context, self.max_context_chars),
+            error_section=error_section[: self.max_error_section_chars] if error_section else "N/A",
         )
         # Full diagnosis prompts need extra params; only add them when template uses them.
         if prompt_template not in (LOW_CONFIDENCE_ABSTAIN_PROMPT,):
@@ -523,9 +575,15 @@ class DebugAgent:
                 line_number=parsed.line_number if parsed else "N/A",
                 error_subtype=self._extract_error_subtype(parsed),
                 diagnostic_guardrails=self._build_diagnostic_guardrails(parsed),
-                stack_trace="\n".join(parsed.stack_trace[:15]) if parsed else "N/A",
+                stack_trace="\n".join(parsed.stack_trace[:8]) if parsed else "N/A",
             )
         return prompt_template.format(**params)
+
+    def _truncate_text(self, text: str, max_chars: int) -> str:
+        """Truncate large prompt sections to keep LLM requests responsive."""
+        if not text or len(text) <= max_chars:
+            return text
+        return text[: max_chars - 15].rstrip() + "\n...[truncated]"
 
     def _select_diagnosis_prompt(
         self,
@@ -541,6 +599,8 @@ class DebugAgent:
             return DOCKER_REGISTRY_AUTH_PROMPT
         if category == "docker_container" and subtype == "image_not_found":
             return DOCKER_IMAGE_NOT_FOUND_PROMPT
+        if category == "network_ssl" and subtype == "k8s_ingress_admission_cert":
+            return K8S_INGRESS_ADMISSION_CERT_PROMPT
         return DIAGNOSIS_PROMPT
 
     def _format_extracted_evidence(self, parsed: Optional[Any]) -> str:
@@ -610,22 +670,53 @@ class DebugAgent:
                 "- Focus on missing files in build context, .dockerignore exclusions, or wrong COPY paths.",
                 "- Do not suggest registry auth unless the log shows pull or authorize failures.",
             ])
+        elif subtype == "k8s_ingress_admission_cert":
+            guardrails.extend([
+                "- Focus on ingress admission webhook CA trust mismatch (caBundle vs served cert) and stale admission cert secrets.",
+                "- Do not frame this as application TLS client-certificate failure unless explicit client-auth evidence exists.",
+                "- Prioritize webhook configuration and ingress-nginx admission certificate rotation/remediation.",
+            ])
 
         return "\n".join(guardrails)
 
     def _extract_suggestions(self, text: str) -> list[str]:
         """Extract numbered suggestions from LLM output."""
-        suggestions = []
         lines = text.split("\n")
-        for line in lines:
+        suggestions: list[str] = []
+
+        # Prefer extracting from the explicit "Fix Suggestions" section.
+        start_idx = None
+        for i, line in enumerate(lines):
+            if "fix suggestions" in line.lower():
+                start_idx = i + 1
+                break
+
+        candidate_lines: list[str]
+        if start_idx is not None:
+            scoped: list[str] = []
+            for line in lines[start_idx:]:
+                stripped = line.strip()
+                if stripped.startswith("## ") and scoped:
+                    break
+                scoped.append(line)
+            candidate_lines = scoped
+        else:
+            candidate_lines = lines
+
+        for line in candidate_lines:
             stripped = line.strip()
-            # Match numbered items like "1.", "2)", "- "
-            if stripped and (
+            if not stripped:
+                continue
+            if (
                 (stripped[0].isdigit() and len(stripped) > 2 and stripped[1] in ".)") or
                 stripped.startswith("- ") or
                 stripped.startswith("* ")
             ):
-                suggestions.append(stripped.lstrip("0123456789.)- *").strip())
+                cleaned = stripped.lstrip("0123456789.)- *").strip()
+                cleaned = cleaned.replace("**", "").strip()
+                if cleaned:
+                    suggestions.append(cleaned)
+
         return suggestions[:10]
 
     def _extract_patch(self, text: str) -> str:

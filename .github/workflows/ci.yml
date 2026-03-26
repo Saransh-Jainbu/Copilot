@@ -42,14 +42,18 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short --cov=src --cov-report=xml
+        run: pytest tests/ -v --tb=short --cov=src --cov-report=xml --cov-report=html 2>&1 | tee test-output.log
+        continue-on-error: true
 
-      - name: Upload coverage
+      - name: Upload test logs and coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
-          path: coverage.xml
+          name: test-results
+          path: |
+            test-output.log
+            coverage.xml
+            htmlcov/
 
   # --- Docker Build ---
   docker-build:

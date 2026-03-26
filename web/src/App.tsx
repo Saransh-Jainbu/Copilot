@@ -45,9 +45,23 @@ const NAV_ITEMS: Array<{ key: View; label: string; icon: string }> = [
   { key: 'history', label: 'History', icon: '◌' },
 ]
 
+function getDefaultApiUrl() {
+  const envUrl = (import.meta.env.VITE_API_URL || '').trim()
+  if (envUrl) {
+    return envUrl
+  }
+
+  const { protocol, hostname } = window.location
+  if (hostname === '127.0.0.1' || hostname === 'localhost') {
+    return `${protocol}//${hostname}:8086`
+  }
+
+  return `${protocol}//${hostname}`
+}
+
 function App() {
   const [view, setView] = useState<View>('analyze')
-  const [apiUrl, setApiUrl] = useState(localStorage.getItem('copilot-api-url') || 'http://127.0.0.1:8086')
+  const [apiUrl, setApiUrl] = useState(localStorage.getItem('copilot-api-url') || getDefaultApiUrl())
   const [logText, setLogText] = useState(SAMPLE_LOG)
   const [enableRag, setEnableRag] = useState(true)
   const [enableSelfCritique, setEnableSelfCritique] = useState(true)
@@ -60,6 +74,11 @@ function App() {
   useEffect(() => {
     localStorage.setItem('copilot-api-url', apiUrl)
   }, [apiUrl])
+
+  useEffect(() => {
+    void autoDetectBackendUrl()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     void loadHistory()
@@ -75,6 +94,50 @@ function App() {
       setHistory(payload.results || [])
     } catch {
       setHistory([])
+    }
+  }
+
+  async function isHealthy(baseUrl: string) {
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 1500)
+
+    try {
+      const res = await fetch(`${baseUrl}/api/health`, { signal: controller.signal })
+      return res.ok
+    } catch {
+      return false
+    } finally {
+      window.clearTimeout(timeout)
+    }
+  }
+
+  async function autoDetectBackendUrl() {
+    const candidates = [
+      localStorage.getItem('copilot-api-url') || '',
+      getDefaultApiUrl(),
+      'http://127.0.0.1:8086',
+      'http://localhost:8086',
+      'http://127.0.0.1:8000',
+      'http://localhost:8000',
+    ].filter(Boolean)
+
+    const seen = new Set<string>()
+    const uniqueCandidates = candidates.filter((url) => {
+      if (seen.has(url)) {
+        return false
+      }
+      seen.add(url)
+      return true
+    })
+
+    for (const candidate of uniqueCandidates) {
+      // Fast check so the page works without forcing users to type URL each launch.
+      // eslint-disable-next-line no-await-in-loop
+      const ok = await isHealthy(candidate)
+      if (ok) {
+        setApiUrl(candidate)
+        return
+      }
     }
   }
 
@@ -180,7 +243,7 @@ function App() {
             <span className="chip">Agent Mode</span>
           </div>
 
-          <label htmlFor="api-url">Backend URL</label>
+          <label htmlFor="api-url">Backend URL (auto-detected)</label>
           <input
             id="api-url"
             className="text-input"

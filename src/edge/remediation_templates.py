@@ -72,6 +72,13 @@ _TEMPLATES: dict[tuple[str, Optional[str]], list[str]] = {
         "Review recent commits that touched files covered by the test to find breaking changes.",
     ],
     # ── Network / SSL ─────────────────────────────────────────────────────────
+    ("network_ssl", "k8s_ingress_admission_cert"): [
+        "Regenerate the ingress-nginx admission webhook certificate and patch the caBundle in its ValidatingWebhookConfiguration.",
+        "Verify the webhook service and secret are in the expected namespace (usually ingress-nginx), then restart the ingress-nginx controller/admission pods.",
+        "Check that the apiserver can trust the webhook CA: compare webhook caBundle against the certificate served by nginx-ingress-controller-admission.",
+        "Reinstall or upgrade ingress-nginx using the official manifest/Helm chart to recreate admission cert and webhook resources when they are stale.",
+        "As a temporary unblock (non-production), disable the validating webhook only long enough to apply and then re-enable after certificate fix.",
+    ],
     ("network_ssl", None): [
         "Confirm the target host is reachable from the CI runner: `curl -v <url>`.",
         "Check whether the organization's network restricts outbound connections (proxy, firewall rules).",

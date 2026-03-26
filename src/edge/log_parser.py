@@ -74,7 +74,7 @@ PATTERNS = {
         re.compile(r"(?i)(\d+ failed,?\s*\d+ passed)\s*(.*)"),
     ],
     "timeout": [
-        re.compile(r"(?i)(timeout|timed out|exceeded .+ seconds)\s*(.*)"),
+        re.compile(r"(?i)(timed out|timeout after|timeout exceeded|exceeded .+ seconds)\s*(.*)"),
         re.compile(r"(?i)(deadline exceeded|operation.*timed out)\s*(.*)"),
     ],
     "permission_error": [
@@ -163,6 +163,18 @@ DOCKER_SUBTYPE_PATTERNS = {
         re.compile(r"(?i)no such file or directory"),
     ],
 }
+
+NETWORK_SSL_SUBTYPE_PATTERNS = {
+    "k8s_ingress_admission_cert": [
+        re.compile(r"(?i)failed calling webhook"),
+        re.compile(r"(?i)validate\.nginx\.ingress\.kubernetes\.io"),
+        re.compile(r"(?i)nginx-ingress-controller-admission"),
+        re.compile(r"(?i)x509:\s*certificate signed by unknown authority"),
+    ],
+}
+
+WEBHOOK_NAME_PATTERN = re.compile(r'failed calling webhook\s+"([^"]+)"', re.IGNORECASE)
+ADMISSION_SERVICE_PATTERN = re.compile(r"https://([a-z0-9.-]+(?:\.[a-z0-9.-]+)*)", re.IGNORECASE)
 
 
 class LogParser:
@@ -327,7 +339,36 @@ class LogParser:
         if "docker" in ecosystems:
             metadata.update(self._extract_docker_metadata(log))
 
+        if any(kw in log.lower() for kw in ["x509", "certificate", "ssl", "tls", "webhook", "ingress"]):
+            metadata.update(self._extract_network_ssl_metadata(log))
+
         return metadata
+
+    def _extract_network_ssl_metadata(self, log: str) -> dict:
+        """Extract network/SSL-specific subtype and evidence for prompt grounding."""
+        ssl_metadata: dict = {}
+
+        subtype = self._detect_network_ssl_subtype(log)
+        if subtype:
+            ssl_metadata["network_ssl_subtype"] = subtype
+
+        webhook = WEBHOOK_NAME_PATTERN.search(log)
+        if webhook:
+            ssl_metadata["webhook_name"] = webhook.group(1)
+
+        svc = ADMISSION_SERVICE_PATTERN.search(log)
+        if svc:
+            ssl_metadata["failing_service"] = svc.group(1)
+
+        return ssl_metadata
+
+    def _detect_network_ssl_subtype(self, log: str) -> Optional[str]:
+        """Detect high-signal network/SSL subtype from log text."""
+        for subtype, patterns in NETWORK_SSL_SUBTYPE_PATTERNS.items():
+            for pattern in patterns:
+                if pattern.search(log):
+                    return subtype
+        return None
 
     def _extract_docker_metadata(self, log: str) -> dict:
         """Extract Docker-specific subtype and artifact details."""

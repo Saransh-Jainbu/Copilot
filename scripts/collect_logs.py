@@ -30,10 +30,34 @@ class LogCollector:
         self.output_dir = output_dir
         self.docs_dir = docs_dir
         self.token = github_token or os.getenv("GITHUB_TOKEN", "")
-        self.headers = {"Authorization": f"token {self.token}"} if self.token else {}
+        self.headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "devops-copilot-log-collector",
+        }
+        if self.token:
+            self.headers["Authorization"] = f"token {self.token}"
+
+        self.session = requests.Session()
+        self.stats = {
+            "runs_seen": 0,
+            "runs_downloaded": 0,
+            "runs_forbidden": 0,
+            "runs_failed": 0,
+        }
 
         os.makedirs(output_dir, exist_ok=True)
         os.makedirs(docs_dir, exist_ok=True)
+
+        if not self.token:
+            logger.warning(
+                "GITHUB_TOKEN is not set. Public workflow metadata can still be listed, "
+                "but many run log downloads will return 403."
+            )
+
+    def _get(self, url: str, **kwargs) -> requests.Response:
+        """GET helper with shared headers, session reuse, and sane defaults."""
+        timeout = kwargs.pop("timeout", 30)
+        return self.session.get(url, headers=self.headers, timeout=timeout, **kwargs)
 
     def collect_workflow_runs(
         self,
@@ -57,7 +81,7 @@ class LogCollector:
         params = {"status": status, "per_page": min(max_runs, 100)}
 
         try:
-            response = requests.get(url, headers=self.headers, params=params, timeout=30)
+            response = self._get(url, params=params, timeout=30)
             response.raise_for_status()
             runs = response.json().get("workflow_runs", [])
             logger.info(f"Fetched {len(runs)} {status} runs from {owner}/{repo}")
@@ -80,9 +104,18 @@ class LogCollector:
         url = f"{GITHUB_API}/repos/{owner}/{repo}/actions/runs/{run_id}/logs"
 
         try:
-            response = requests.get(
-                url, headers=self.headers, timeout=60, allow_redirects=True
-            )
+            response = self._get(url, timeout=60, allow_redirects=True)
+
+            if response.status_code == 403:
+                self.stats["runs_forbidden"] += 1
+                logger.warning(
+                    "Failed to download run %s from %s/%s: 403 Forbidden. "
+                    "Set GITHUB_TOKEN in .env to improve access.",
+                    run_id,
+                    owner,
+                    repo,
+                )
+                return None
 
             if response.status_code == 200:
                 # GitHub returns a zip file; for simplicity, we'll handle text
@@ -91,13 +124,20 @@ class LogCollector:
                 with open(output_file, "wb") as f:
                     f.write(response.content)
                 logger.info(f"Downloaded logs for run {run_id}")
+                self.stats["runs_downloaded"] += 1
                 return output_file
             else:
+                self.stats["runs_failed"] += 1
                 logger.warning(f"Failed to download run {run_id}: {response.status_code}")
                 return None
 
         except requests.RequestException as e:
+            self.stats["runs_failed"] += 1
             logger.error(f"Error downloading run {run_id}: {e}")
+            return None
+        except Exception as e:
+            self.stats["runs_failed"] += 1
+            logger.error(f"Unexpected error downloading run {run_id}: {e}")
             return None
 
     def collect_from_repos(
@@ -121,14 +161,32 @@ class LogCollector:
             runs = self.collect_workflow_runs(owner, repo, max_runs=max_per_repo)
 
             for run in runs:
-                filepath = self.download_run_logs(owner, repo, run["id"])
-                if filepath:
-                    all_files.append(filepath)
+                self.stats["runs_seen"] += 1
+                try:
+                    filepath = self.download_run_logs(owner, repo, run["id"])
+                    if filepath:
+                        all_files.append(filepath)
+                except Exception as e:
+                    self.stats["runs_failed"] += 1
+                    logger.error(
+                        "Unexpected error while collecting run %s from %s/%s: %s",
+                        run.get("id"),
+                        owner,
+                        repo,
+                        e,
+                    )
 
                 # Rate limiting
                 time.sleep(1)
 
-        logger.info(f"Collected {len(all_files)} log files total")
+        logger.info(
+            "Collected %s log files total (runs seen=%s, downloaded=%s, forbidden=%s, failed=%s)",
+            len(all_files),
+            self.stats["runs_seen"],
+            self.stats["runs_downloaded"],
+            self.stats["runs_forbidden"],
+            self.stats["runs_failed"],
+        )
         return all_files
 
     def collect_github_docs(self, pages: list[str] | None = None) -> list[str]:

@@ -121,6 +121,19 @@ class TestLogParser:
         assert result.metadata["dockerfile_line"] == 1
         assert result.metadata["failing_instruction"] == "FROM node:18-alpine"
 
+    def test_parse_k8s_ingress_admission_x509_subtype(self, parser):
+        log = """
+        Error from server (InternalError): error when creating "deployment.yaml":
+        Internal error occurred: failed calling webhook "validate.nginx.ingress.kubernetes.io":
+        Post "https://nginx-ingress-controller-admission.default.svc:443/networking/v1/ingresses?timeout=10s":
+        x509: certificate signed by unknown authority
+        """
+        result = parser.parse(log)
+        assert result.error_type == "network_ssl"
+        assert result.metadata["network_ssl_subtype"] == "k8s_ingress_admission_cert"
+        assert result.metadata["webhook_name"] == "validate.nginx.ingress.kubernetes.io"
+        assert "nginx-ingress-controller-admission.default.svc" in result.metadata["failing_service"]
+
     def test_extract_stack_trace(self, parser):
         log = """
         Traceback (most recent call last):

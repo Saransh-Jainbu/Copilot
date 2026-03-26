@@ -404,18 +404,25 @@ class DebugAgent:
 
         llm_response = self.llm.generate(prompt, max_tokens=self.max_diagnosis_tokens)
         diagnosis_text = llm_response["text"]
+        llm_failed = bool(llm_response.get("error", False))
+        if llm_failed:
+            diagnosis_text = self._build_fallback_diagnosis(classification, parsed)
         trace.append(AgentStep(
             step_number=step_num,
             action=AgentAction.REASON.value,
             input_summary=f"Prompt ({len(prompt)} chars)",
             output_summary=f"Generated {len(diagnosis_text)} chars ({llm_response['latency_ms']}ms)",
             latency_ms=llm_response["latency_ms"],
-            metadata={"model": llm_response["model"], "tokens": llm_response["tokens_used"]},
+            metadata={
+                "model": llm_response["model"],
+                "tokens": llm_response["tokens_used"],
+                "llm_error": llm_failed,
+            },
         ))
 
         # --- Step 5: Self-Critique (optional) ---
         confidence = classification.confidence
-        if self.enable_self_critique and step_num < self.max_reasoning_steps:
+        if self.enable_self_critique and step_num < self.max_reasoning_steps and not llm_failed:
             step_num += 1
             step_start = time.time()
             critique_prompt = SELF_CRITIQUE_PROMPT.format(
@@ -718,6 +725,36 @@ class DebugAgent:
                     suggestions.append(cleaned)
 
         return suggestions[:10]
+
+    def _build_fallback_diagnosis(
+        self,
+        classification: ClassificationResult,
+        parsed: Optional[Any],
+    ) -> str:
+        """Build deterministic diagnosis text when LLM inference fails.
+
+        This keeps API responses actionable even if model routing/auth is unavailable.
+        """
+        error_message = "N/A"
+        failing_line = "N/A"
+
+        if parsed:
+            if parsed.error_message:
+                error_message = parsed.error_message.strip()
+            if parsed.error_lines:
+                failing_line = parsed.error_lines[0].strip()
+
+        return (
+            "## Root Cause Diagnosis\n"
+            "Model inference was unavailable during this run, so this diagnosis is based on parsed log evidence.\n\n"
+            f"- Classified failure type: {classification.category}\n"
+            f"- Primary error message: {error_message}\n"
+            f"- Key failing line: {failing_line}\n\n"
+            "## Fix Suggestions\n"
+            "Use the suggestions below, which come from rule-based remediation templates and parsed evidence.\n\n"
+            "## Patch Recommendation\n"
+            "No specific patch generated. See fix suggestions above."
+        )
 
     def _extract_patch(self, text: str) -> str:
         """Extract code patch content from LLM output."""

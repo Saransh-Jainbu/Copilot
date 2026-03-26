@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows: ["DevOps Copilot CI"]
     types: [completed]
+  workflow_dispatch:
 
 permissions:
   pull-requests: write

@@ -1,4 +1,4 @@
-.PHONY: install test lint run-api run-frontend build-index collect-data docker-build docker-up clean
+.PHONY: install test lint run-api run-web build-index collect-data docker-build docker-up clean
 
 # --- Setup ---
 install:
@@ -8,8 +8,8 @@ install:
 run-api:
 	uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8080
 
-run-frontend:
-	streamlit run frontend/app.py --server.port 8501
+run-web:
+	cd web && npm install && npm run dev -- --host 127.0.0.1 --port 5173
 
 # --- Data ---
 collect-data:

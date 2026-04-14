@@ -38,18 +38,5 @@ services:
     depends_on:
       - fog
 
-  # --- Streamlit Frontend ---
-  frontend:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-    command: streamlit run frontend/app.py --server.port=8501 --server.headless=true
-    ports:
-      - "8501:8501"
-    environment:
-      - API_URL=http://cloud-api:8000
-    depends_on:
-      - cloud-api
-
 volumes:
   shared-data:

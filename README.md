@@ -11,7 +11,7 @@ The project now runs as:
 
 ## What Is Current In This Repo
 
-- Primary UI is React (web). Streamlit app in frontend/app.py is legacy.
+- Primary UI is React (web).
 - API endpoints are exposed under /api/* from src/api/main.py.
 - FAISS index artifacts are expected at data/faiss_index/index.faiss and data/faiss_index/metadata.json.
 - Render deploy config is in render.yaml and uses the root Dockerfile.
@@ -55,8 +55,6 @@ Copilot/
     Dockerfile.cloud
     Dockerfile.edge
     Dockerfile.fog
-  frontend/
-    app.py                     # legacy Streamlit UI
   scripts/
     benchmark.py
     benchmark_mteb.py
@@ -295,8 +293,6 @@ Compose stack:
 ```bash
 docker compose -f docker/docker-compose.yml up --build
 ```
-
-Important: docker/docker-compose.yml still includes the legacy Streamlit frontend service. The modern React frontend is in web and is typically run separately for local development.
 
 ## Deployment
 

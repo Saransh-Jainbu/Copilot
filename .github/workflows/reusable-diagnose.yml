@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       artifacts-name:
-        description: Artifact name produced by CI (for example: test-results)
+        description: "Artifact name produced by CI (for example: test-results)"
         required: false
         default: test-results
         type: string
@@ -66,14 +66,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           run-id: ${{ github.event.workflow_run.id }}
-          name: ${{ inputs.artifacts-name }}
-          path: ${{ inputs.artifacts-path }}
+          name: ${{ inputs['artifacts-name'] }}
+          path: ${{ inputs['artifacts-path'] }}
         continue-on-error: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ inputs.python-version }}
+          python-version: ${{ inputs['python-version'] }}
 
       - name: Install diagnosis dependencies
         shell: bash
@@ -88,11 +88,11 @@ jobs:
         env:
           HUGGINGFACE_API_TOKEN: ${{ secrets.HUGGINGFACE_API_TOKEN }}
         run: |
-          echo "Starting diagnosis API on port ${{ inputs.api-port }}"
-          python -m uvicorn src.api.main:app --app-dir .diagnoser --host 127.0.0.1 --port ${{ inputs.api-port }} > api.log 2>&1 &
+          echo "Starting diagnosis API on port ${{ inputs['api-port'] }}"
+          python -m uvicorn src.api.main:app --app-dir .diagnoser --host 127.0.0.1 --port ${{ inputs['api-port'] }} > api.log 2>&1 &
 
           for i in {1..30}; do
-            if curl -s "http://127.0.0.1:${{ inputs.api-port }}/api/health" > /dev/null 2>&1; then
+            if curl -s "http://127.0.0.1:${{ inputs['api-port'] }}/api/health" > /dev/null 2>&1; then
               echo "api-ready=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -110,12 +110,12 @@ jobs:
         shell: bash
         run: |
           python .diagnoser/scripts/diagnose_workflow_failure.py \
-            --artifacts-dir "${{ inputs.artifacts-path }}" \
-            --api-url "http://127.0.0.1:${{ inputs.api-port }}"
+            --artifacts-dir "${{ inputs['artifacts-path'] }}" \
+            --api-url "http://127.0.0.1:${{ inputs['api-port'] }}"
         continue-on-error: true
 
       - name: Resolve PR number for workflow_run
-        if: inputs.post-comment == true && github.event_name == 'workflow_run'
+        if: inputs['post-comment'] == true && github.event_name == 'workflow_run'
         id: resolve-pr
         uses: actions/github-script@v7
         with:
@@ -134,7 +134,7 @@ jobs:
             core.setOutput('pr-number', prs.data.length ? String(prs.data[0].number) : '');
 
       - name: Post diagnosis comment
-        if: inputs.post-comment == true
+        if: inputs['post-comment'] == true
         uses: actions/github-script@v7
         with:
           script: |

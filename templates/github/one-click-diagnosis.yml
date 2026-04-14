@@ -6,6 +6,11 @@ on:
     types: [completed]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  checks: read
+  pull-requests: write
+
 jobs:
   diagnose:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure')

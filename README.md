@@ -2,7 +2,7 @@
 
 Autonomous CI/CD debugging assistant powered by rule-based parsing, retrieval-augmented generation (RAG), and LLM reasoning.
 
-The project now runs as:
+The project runs as:
 
 - FastAPI backend in src/api
 - React + Vite frontend in web
@@ -15,6 +15,7 @@ The project now runs as:
 - API endpoints are exposed under /api/* from src/api/main.py.
 - FAISS index artifacts are expected at data/faiss_index/index.faiss and data/faiss_index/metadata.json.
 - Render deploy config is in render.yaml and uses the root Dockerfile.
+- The cloud layer uses Hugging Face Inference API for generated text unless you reconfigure it.
 
 ## Architecture
 
@@ -22,7 +23,7 @@ Pipeline flow:
 
 1. Edge: preprocess + parse + classify failure logs
 2. Fog: embed query + retrieve relevant docs from FAISS
-3. Cloud: prompt LLM, reason, optionally self-critique, produce diagnosis and fixes
+3. Cloud: prompt an LLM endpoint, reason, optionally self-critique, produce diagnosis and fixes
 4. Ops: evaluate quality and track run metadata/history
 
 Core modules:
@@ -36,6 +37,13 @@ Core modules:
 - src/cloud/llm_client.py
 - src/ops/evaluator.py
 - src/api/main.py
+
+Cloud model behavior:
+
+- The repository does not bundle a local LLM server.
+- Text generation currently goes through Hugging Face Inference API in src/cloud/llm_client.py.
+- Primary and fallback model IDs can be overridden with HF_PRIMARY_MODEL and HF_FALLBACK_MODEL.
+- If inference fails, the cloud agent falls back to rule-based diagnosis text and remediation templates.
 
 ## Project Structure
 
@@ -89,6 +97,7 @@ Copilot/
 - Python 3.11+
 - Node.js 20+
 - Hugging Face token for cloud inference
+- Internet access for Hugging Face inference calls
 
 ## Environment Setup
 
@@ -124,6 +133,8 @@ Required in .env:
 
 ```env
 HUGGINGFACE_API_TOKEN=hf_xxx
+HF_PRIMARY_MODEL=mistralai/Mistral-7B-Instruct-v0.3
+HF_FALLBACK_MODEL=microsoft/phi-2
 LOG_LEVEL=INFO
 APP_ENV=development
 ```
@@ -162,6 +173,7 @@ Notes:
 - You can still change backend URL from the Analyze view input field.
 - To pin backend URL at build/dev time, set VITE_API_URL in web/.env.local.
 - API health check: GET http://127.0.0.1:8086/api/health
+- If Hugging Face rejects the configured model IDs, update HF_PRIMARY_MODEL and HF_FALLBACK_MODEL in .env.
 
 Example web/.env.local:
 
@@ -214,6 +226,11 @@ Returns recent in-memory debug runs (latest first, capped in process).
 ### GET /api/metrics
 
 Returns MLflow summary when available.
+
+### Cloud LLM behavior
+
+The cloud diagnosis layer uses an external LLM provider for generated prose.
+If the provider is unavailable or the model IDs are not supported, the agent returns a deterministic fallback diagnosis and fix suggestions.
 
 ## Data And Retrieval
 
@@ -333,7 +350,10 @@ Includes:
    - data/faiss_index/metadata.json
 
 4. LLM call failures:
-   Verify HUGGINGFACE_API_TOKEN in .env and outbound internet access.
+  Verify HUGGINGFACE_API_TOKEN in .env, outbound internet access, and supported HF_PRIMARY_MODEL / HF_FALLBACK_MODEL values.
+
+5. Model unsupported by provider:
+  Change HF_PRIMARY_MODEL and HF_FALLBACK_MODEL to model IDs supported by your Hugging Face route.
 
 ## License
 

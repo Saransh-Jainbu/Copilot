@@ -10,6 +10,7 @@ This script is invoked by GitHub Actions to:
 import argparse
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -26,6 +27,55 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def build_diagnosis_log(log_text: str, max_chars: int = 10000) -> str:
+    """Prepare a high-signal log snippet for diagnosis.
+
+    Prioritize traceback and failure lines so the model sees concrete evidence,
+    then append tail content for context. This avoids generic diagnoses when
+    raw logs are large.
+    """
+    if not log_text:
+        return ""
+
+    text = log_text.strip()
+    if len(text) <= max_chars:
+        return text
+
+    lines = text.splitlines()
+    keyword_pattern = re.compile(
+        r"(traceback|error|exception|failed|importerror|modulenotfounderror|" 
+        r"assertionerror|exit code|collecting|could not)",
+        re.IGNORECASE,
+    )
+
+    selected_indices: set[int] = set()
+    for idx, line in enumerate(lines):
+        if keyword_pattern.search(line):
+            start = max(0, idx - 2)
+            end = min(len(lines), idx + 3)
+            selected_indices.update(range(start, end))
+
+    evidence_lines = [lines[i] for i in sorted(selected_indices)]
+    evidence_text = "\n".join(evidence_lines).strip()
+
+    # Keep recent output too; failing stack traces are often near the end.
+    tail_budget = max_chars // 2
+    tail_text = text[-tail_budget:]
+
+    combined_parts = []
+    if evidence_text:
+        combined_parts.append("--- Extracted Failure Evidence ---\n" + evidence_text)
+    combined_parts.append("--- Recent Log Tail ---\n" + tail_text)
+    combined = "\n\n".join(combined_parts)
+
+    if len(combined) <= max_chars:
+        return combined
+
+    # Final guard: keep both the beginning (evidence) and end (latest failures).
+    head_budget = max_chars // 3
+    return combined[:head_budget] + "\n\n...\n\n" + combined[-(max_chars - head_budget - 7):]
 
 
 def collect_local_logs(search_dir: Path = Path(".")) -> str:
@@ -82,8 +132,10 @@ def diagnose_failure(api_url: str, log_text: str) -> dict:
         logger.error("No log text provided for diagnosis")
         return None
     
+    prepared_log = build_diagnosis_log(log_text, max_chars=10000)
+
     payload = {
-        "log_text": log_text[:10000],  # Limit to 10k chars for API
+        "log_text": prepared_log,
         "enable_rag": True,
         "enable_self_critique": False,
         "max_steps": 3,

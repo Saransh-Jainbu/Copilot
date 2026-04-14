@@ -28,6 +28,16 @@ on:
         required: false
         default: true
         type: boolean
+      diagnosis-repository:
+        description: Repository that contains the diagnosis toolkit workflow and scripts
+        required: false
+        default: Saransh-Jainbu/Copilot
+        type: string
+      diagnosis-ref:
+        description: Ref of the diagnosis toolkit repository
+        required: false
+        default: master
+        type: string
     secrets:
       HUGGINGFACE_API_TOKEN:
         required: false
@@ -44,21 +54,11 @@ jobs:
       - name: Checkout caller repository
         uses: actions/checkout@v4
 
-      - name: Resolve diagnosis repository and ref
-        id: resolve-diagnoser
-        shell: bash
-        run: |
-          wf_ref="${GITHUB_WORKFLOW_REF}"
-          repo="${wf_ref%%/.github/workflows/*}"
-          ref="${wf_ref##*@}"
-          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
-          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout diagnosis toolkit
         uses: actions/checkout@v4
         with:
-          repository: ${{ steps.resolve-diagnoser.outputs.repo }}
-          ref: ${{ steps.resolve-diagnoser.outputs.ref }}
+          repository: ${{ inputs['diagnosis-repository'] }}
+          ref: ${{ inputs['diagnosis-ref'] }}
           path: .diagnoser
 
       - name: Download CI artifacts from triggering run

@@ -33,6 +33,31 @@ type DebugResponse = {
   total_latency_ms: number
 }
 
+type AuthSession = {
+  authenticated: boolean
+  google_user?: {
+    id?: string
+    email?: string
+    name?: string
+    picture?: string
+  }
+  github_connected: boolean
+  csrf_token?: string
+  github_user?: {
+    id?: number
+    login?: string
+    name?: string
+    avatar_url?: string
+  }
+}
+
+type GithubRepo = {
+  id: number
+  full_name: string
+  private: boolean
+  default_branch: string
+}
+
 const SAMPLE_LOG = `#6 [internal] load metadata for docker.io/library/node:18-alpine
 #6 ERROR: failed to authorize: rpc error: code = Unknown desc = failed to fetch oauth token
 unexpected status: 401 Unauthorized
@@ -70,6 +95,14 @@ function App() {
   const [error, setError] = useState('')
   const [result, setResult] = useState<DebugResponse | null>(null)
   const [history, setHistory] = useState<DebugHistoryItem[]>([])
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null)
+  const [repos, setRepos] = useState<GithubRepo[]>([])
+  const [reposLoading, setReposLoading] = useState(false)
+  const [selectedRepo, setSelectedRepo] = useState('')
+  const [ciWorkflowName, setCiWorkflowName] = useState('CI')
+  const [initLoading, setInitLoading] = useState(false)
+  const [initStatus, setInitStatus] = useState('')
+  const [authError, setAuthError] = useState('')
 
   useEffect(() => {
     localStorage.setItem('copilot-api-url', apiUrl)
@@ -82,7 +115,22 @@ function App() {
 
   useEffect(() => {
     void loadHistory()
+    void loadAuthSession()
   }, [apiUrl])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const authFlag = params.get('auth')
+    if (authFlag) {
+      void loadAuthSession()
+      params.delete('auth')
+      const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`
+      window.history.replaceState({}, '', nextUrl)
+      if (authFlag.includes('error')) {
+        setAuthError('Authentication did not complete. Please try again.')
+      }
+    }
+  }, [])
 
   async function loadHistory() {
     try {
@@ -94,6 +142,100 @@ function App() {
       setHistory(payload.results || [])
     } catch {
       setHistory([])
+    }
+  }
+
+  async function loadAuthSession() {
+    try {
+      const res = await fetch(`${apiUrl}/api/auth/session`, { credentials: 'include' })
+      if (!res.ok) {
+        setAuthSession(null)
+        return
+      }
+      const payload: AuthSession = await res.json()
+      setAuthSession(payload)
+      if (payload.github_connected) {
+        await loadRepos()
+      }
+    } catch {
+      setAuthSession(null)
+    }
+  }
+
+  async function loadRepos() {
+    setReposLoading(true)
+    try {
+      const res = await fetch(`${apiUrl}/api/github/repos`, { credentials: 'include' })
+      if (!res.ok) {
+        setRepos([])
+        return
+      }
+      const payload = await res.json()
+      const repoList: GithubRepo[] = payload.repos || []
+      setRepos(repoList)
+      if (!selectedRepo && repoList.length) {
+        setSelectedRepo(repoList[0].full_name)
+      }
+    } catch {
+      setRepos([])
+    } finally {
+      setReposLoading(false)
+    }
+  }
+
+  function startGoogleLogin() {
+    const next = encodeURIComponent(`${window.location.origin}/?view=dashboard&auth=google_done`)
+    window.location.href = `${apiUrl}/api/auth/google/login?next=${next}`
+  }
+
+  function startGithubConnect() {
+    const next = encodeURIComponent(`${window.location.origin}/?view=dashboard&auth=github_done`)
+    window.location.href = `${apiUrl}/api/auth/github/login?next=${next}`
+  }
+
+  async function initializeSelectedRepo() {
+    if (!selectedRepo) {
+      setInitStatus('Please select a repository first.')
+      return
+    }
+
+    const [owner, repo] = selectedRepo.split('/')
+    if (!owner || !repo) {
+      setInitStatus('Selected repository is invalid.')
+      return
+    }
+
+    setInitLoading(true)
+    setInitStatus('')
+    try {
+      const res = await fetch(`${apiUrl}/api/github/initialize`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': authSession?.csrf_token || '',
+        },
+        body: JSON.stringify({
+          owner,
+          repo,
+          ci_workflow_name: ciWorkflowName || 'CI',
+          workflow_path: '.github/workflows/ci-failure-diagnosis.yml',
+          post_comment: true,
+        }),
+      })
+
+      if (!res.ok) {
+        const message = await res.text()
+        throw new Error(message)
+      }
+
+      const payload = await res.json()
+      setInitStatus(`Initialized ${payload.repository} on branch ${payload.branch}. Commit ${String(payload.commit || '').slice(0, 7)}.`)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Initialization failed'
+      setInitStatus(`Initialization failed: ${message}`)
+    } finally {
+      setInitLoading(false)
     }
   }
 
@@ -198,9 +340,83 @@ function App() {
     return (
       <section className="panel">
         <header className="hero-block">
-          <h1>DevOps Copilot Command Deck</h1>
-          <p>Real-time CI/CD diagnosis with retrieval, classifier confidence, and guided remediation.</p>
+          <h1>CI Diagnosis Launch Console</h1>
+          <p>Sign in with Google, connect GitHub, pick a repository, and initialize one-click failure diagnosis.</p>
         </header>
+
+        <div className="onboard-grid">
+          <article className="diagnosis-card">
+            <h3>1. Google Login</h3>
+            <p className="muted">Use Google account authentication before repository operations.</p>
+            {authSession?.authenticated ? (
+              <p>Signed in as <strong>{authSession.google_user?.email || authSession.google_user?.name}</strong></p>
+            ) : (
+              <button type="button" className="secondary-button" onClick={startGoogleLogin}>Continue with Google</button>
+            )}
+          </article>
+
+          <article className="diagnosis-card">
+            <h3>2. GitHub Permission</h3>
+            <p className="muted">Grant repository access so the app can commit workflow setup and post comments.</p>
+            {authSession?.github_connected ? (
+              <p>Connected as <strong>{authSession.github_user?.login || authSession.github_user?.name}</strong></p>
+            ) : (
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={!authSession?.authenticated}
+                onClick={startGithubConnect}
+              >
+                Connect GitHub
+              </button>
+            )}
+          </article>
+
+          <article className="diagnosis-card">
+            <h3>3. Initialize Repository</h3>
+            <p className="muted">Select a repository and inject the reusable diagnosis workflow automatically.</p>
+
+            <label htmlFor="ci-workflow">Triggering CI workflow name</label>
+            <input
+              id="ci-workflow"
+              className="text-input"
+              value={ciWorkflowName}
+              onChange={(e) => setCiWorkflowName(e.target.value)}
+              placeholder="CI"
+            />
+
+            <label htmlFor="repo-select">Repository</label>
+            <select
+              id="repo-select"
+              className="text-input"
+              value={selectedRepo}
+              onChange={(e) => setSelectedRepo(e.target.value)}
+              disabled={!authSession?.github_connected || reposLoading}
+            >
+              {!repos.length && <option value="">No repositories loaded</option>}
+              {repos.map((repo) => (
+                <option key={repo.id} value={repo.full_name}>{repo.full_name}</option>
+              ))}
+            </select>
+
+            <div className="inline-actions">
+              <button type="button" className="secondary-button" disabled={!authSession?.github_connected || reposLoading} onClick={() => void loadRepos()}>
+                {reposLoading ? 'Loading repos...' : 'Refresh Repositories'}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={!authSession?.github_connected || !selectedRepo || initLoading}
+                onClick={() => void initializeSelectedRepo()}
+              >
+                {initLoading ? 'Initializing...' : 'Initialize on Repository'}
+              </button>
+            </div>
+
+            {initStatus && <p className="muted">{initStatus}</p>}
+            {authError && <p className="error">{authError}</p>}
+          </article>
+        </div>
 
         <div className="metric-grid">
           <article className="metric-card">
@@ -388,8 +604,8 @@ function App() {
         <div className="brand">
           <div className="brand-mark">DC</div>
           <div>
-            <h2>DevOps Copilot</h2>
-            <p>Neural Debug Station</p>
+            <h2>CI Diagnosis</h2>
+            <p>One-Click Initializer</p>
           </div>
         </div>
 

@@ -1,0 +1,196 @@
+name: Reusable CI Failure Diagnosis
+
+on:
+  workflow_call:
+    inputs:
+      artifacts-name:
+        description: Artifact name produced by CI (for example: test-results)
+        required: false
+        default: test-results
+        type: string
+      artifacts-path:
+        description: Local directory to place downloaded artifacts
+        required: false
+        default: artifacts
+        type: string
+      python-version:
+        description: Python version for diagnosis runtime
+        required: false
+        default: "3.11"
+        type: string
+      api-port:
+        description: Local API port used by the diagnosis service
+        required: false
+        default: "8000"
+        type: string
+      post-comment:
+        description: Post diagnosis to PR comment when possible
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      HUGGINGFACE_API_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+
+      - name: Resolve diagnosis repository and ref
+        id: resolve-diagnoser
+        shell: bash
+        run: |
+          wf_ref="${GITHUB_WORKFLOW_REF}"
+          repo="${wf_ref%%/.github/workflows/*}"
+          ref="${wf_ref##*@}"
+          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout diagnosis toolkit
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.resolve-diagnoser.outputs.repo }}
+          ref: ${{ steps.resolve-diagnoser.outputs.ref }}
+          path: .diagnoser
+
+      - name: Download CI artifacts from triggering run
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          name: ${{ inputs.artifacts-name }}
+          path: ${{ inputs.artifacts-path }}
+        continue-on-error: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install diagnosis dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r .diagnoser/requirements.txt --quiet
+          python -m pip install requests --quiet
+
+      - name: Start diagnosis API
+        id: start-api
+        shell: bash
+        env:
+          HUGGINGFACE_API_TOKEN: ${{ secrets.HUGGINGFACE_API_TOKEN }}
+        run: |
+          echo "Starting diagnosis API on port ${{ inputs.api-port }}"
+          python -m uvicorn src.api.main:app --app-dir .diagnoser --host 127.0.0.1 --port ${{ inputs.api-port }} > api.log 2>&1 &
+
+          for i in {1..30}; do
+            if curl -s "http://127.0.0.1:${{ inputs.api-port }}/api/health" > /dev/null 2>&1; then
+              echo "api-ready=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "api-ready=false" >> "$GITHUB_OUTPUT"
+          echo "Diagnosis API did not become ready in time"
+          cat api.log
+          exit 0
+        continue-on-error: true
+
+      - name: Run diagnosis
+        if: steps.start-api.outputs.api-ready == 'true'
+        shell: bash
+        run: |
+          python .diagnoser/scripts/diagnose_workflow_failure.py \
+            --artifacts-dir "${{ inputs.artifacts-path }}" \
+            --api-url "http://127.0.0.1:${{ inputs.api-port }}"
+        continue-on-error: true
+
+      - name: Resolve PR number for workflow_run
+        if: inputs.post-comment == true && github.event_name == 'workflow_run'
+        id: resolve-pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.payload.workflow_run?.head_branch;
+            if (!branch) {
+              core.setOutput('pr-number', '');
+              return;
+            }
+            const prs = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: `${context.repo.owner}:${branch}`
+            });
+            core.setOutput('pr-number', prs.data.length ? String(prs.data[0].number) : '');
+
+      - name: Post diagnosis comment
+        if: inputs.post-comment == true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('diagnosis_result.json')) {
+              console.log('No diagnosis_result.json found, skipping PR comment');
+              return;
+            }
+
+            const diagnosis = JSON.parse(fs.readFileSync('diagnosis_result.json', 'utf8'));
+            const issueType = diagnosis.classification?.category || 'Unknown';
+            const confidence = ((diagnosis.confidence || 0) * 100).toFixed(1);
+            const latency = diagnosis.total_latency_ms || 'N/A';
+            const diagnosisText = diagnosis.diagnosis || 'Unable to determine root cause';
+            const rootCauseText = diagnosisText
+              .replace(/\r/g, '')
+              .replace(/^\s*#{2,3}\s*Root Cause Diagnosis\s*/i, '')
+              .replace(/(^|\n)#{2,3}\s*Fix Suggestions[\s\S]*$/i, '')
+              .replace(/(^|\n)#{2,3}\s*Patch Recommendation[\s\S]*$/i, '')
+              .trim();
+            const suggestions = (diagnosis.fix_suggestions || []).slice(0, 5);
+            const patch = diagnosis.patch_recommendation || '';
+
+            let prNumber = '';
+            if (context.payload.pull_request?.number) {
+              prNumber = String(context.payload.pull_request.number);
+            } else if ('${{ steps.resolve-pr.outputs.pr-number }}') {
+              prNumber = '${{ steps.resolve-pr.outputs.pr-number }}';
+            }
+
+            if (!prNumber) {
+              console.log('No PR context found, skipping comment');
+              return;
+            }
+
+            let comment = `## Automated CI/CD Failure Diagnosis\n\n`;
+            comment += `Issue Type: ${issueType}\n\n`;
+            comment += `Root Cause\n${rootCauseText || diagnosisText}\n\n`;
+            comment += `Suggested Fixes\n`;
+            for (let i = 0; i < suggestions.length; i++) {
+              comment += `${i + 1}. ${suggestions[i]}\n`;
+            }
+            if (patch && patch.length < 1200) {
+              comment += `\nRecommended Patch\n\`\`\`\n${patch}\n\`\`\`\n`;
+            }
+            comment += `\nConfidence: ${confidence}%\n`;
+            comment += `Analysis Time: ${latency}ms`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number(prNumber),
+              body: comment,
+            });
+
+      - name: Stop diagnosis API
+        if: always()
+        shell: bash
+        run: pkill -f "uvicorn" || true

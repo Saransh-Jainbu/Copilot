@@ -1,0 +1,19 @@
+name: CI Failure Diagnosis
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    if: github.event.workflow_run.conclusion == 'failure'
+    uses: <OWNER>/<REPO>/.github/workflows/reusable-diagnose.yml@main
+    with:
+      artifacts-name: test-results
+      artifacts-path: artifacts
+      python-version: "3.11"
+      api-port: "8000"
+      post-comment: true
+    secrets: inherit

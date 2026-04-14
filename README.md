@@ -99,6 +99,59 @@ Project/
 3. Rename the workflow, Docker image tag, and Render service name to match the new project.
 4. Update the prompt metadata and any docs or experiment names that should reflect the new repository.
 
+## One-Click GitHub Setup
+
+This repository now provides a reusable workflow that can be called from any project:
+
+- Reusable workflow: `.github/workflows/reusable-diagnose.yml`
+- Consumer template: `templates/github/one-click-diagnosis.yml`
+
+Quick install flow for another repository:
+
+1. Add one workflow file in the target repository using `templates/github/one-click-diagnosis.yml` as the source.
+2. Replace `<OWNER>/<REPO>` with the repository that hosts this toolkit.
+3. Ensure the target CI uploads an artifact named `test-results` (or change `artifacts-name`).
+4. Add `HUGGINGFACE_API_TOKEN` in target repository secrets.
+
+After that, every failed CI run can trigger diagnosis automatically and post a PR comment.
+
+## Centralized Onboarding Site (Vercel)
+
+If you want a centralized "Install" page:
+
+1. Create a small web page (for example in Vercel) with fields for owner/repo/ref.
+2. Generate the final YAML from `templates/github/one-click-diagnosis.yml` by replacing placeholders.
+3. Provide a copy button and a deep link to create a file in GitHub:
+
+`https://github.com/<target-owner>/<target-repo>/new/main/.github/workflows/ci-failure-diagnosis.yml`
+
+This gives a near one-click install experience without requiring users to understand workflow internals.
+
+## Production Auth And Security
+
+For production deployment of the onboarding dashboard, configure these values in `.env`:
+
+- `SESSION_SECRET`: long random secret used to sign session cookies
+- `SESSION_DB_PATH`: SQLite path for persistent session storage
+- `SESSION_COOKIE_SECURE=true` when running over HTTPS
+- `SESSION_COOKIE_DOMAIN`: optional shared domain for subdomain deployments
+- `OAUTH_STATE_TTL_SECONDS`: OAuth state lifetime (default 900)
+- `CORS_ORIGINS`: explicit frontend origins allowed for credentialed requests
+
+OAuth endpoints used by the dashboard:
+
+- `GET /api/auth/google/login`
+- `GET /api/auth/github/login`
+- `GET /api/auth/session`
+- `GET /api/github/repos`
+- `POST /api/github/initialize` (CSRF token required)
+
+Optional GitHub App installation entrypoint:
+
+- `GET /api/auth/github/app/install`
+
+This endpoint is enabled when `GITHUB_APP_NAME` is configured and can be linked from a centralized onboarding page.
+
 ## Prerequisites
 
 - Python 3.11+

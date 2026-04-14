@@ -66,8 +66,9 @@ def build_diagnosis_log(log_text: str, max_chars: int = 10000) -> str:
 
     combined_parts = []
     if evidence_text:
-        combined_parts.append("--- Extracted Failure Evidence ---\n" + evidence_text)
-    combined_parts.append("--- Recent Log Tail ---\n" + tail_text)
+        # Keep section labels neutral so parser regexes do not treat headers as error lines.
+        combined_parts.append("--- Evidence Snippet ---\n" + evidence_text)
+    combined_parts.append("--- Recent Tail ---\n" + tail_text)
     combined = "\n\n".join(combined_parts)
 
     if len(combined) <= max_chars:

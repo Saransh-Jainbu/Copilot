@@ -1,4 +1,4 @@
-# DevOps Copilot - Edge Layer
+# CI Failure Diagnosis - Edge Layer
 
 from src.edge.log_parser import LogParser, ParsedLog
 from src.edge.classifier import FailureClassifier, ClassificationResult

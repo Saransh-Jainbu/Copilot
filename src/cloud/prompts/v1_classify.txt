@@ -1,5 +1,5 @@
 # Version: v1
-# Author: devops-copilot
+# Author: ci-failure-diagnosis
 # Description: Error classification prompt
 # Category: classification
 

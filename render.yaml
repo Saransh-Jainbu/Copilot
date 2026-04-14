@@ -3,7 +3,7 @@
 
 services:
   - type: web
-    name: devops-copilot-api
+    name: ci-failure-diagnosis-api
     runtime: docker
     dockerfilePath: ./Dockerfile
     envVars:

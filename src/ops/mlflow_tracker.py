@@ -4,9 +4,7 @@ Tracks experiments, prompt versions, and evaluation metrics.
 """
 
 import logging
-import os
-import time
-from typing import Any, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +19,7 @@ class MLflowTracker:
     def __init__(
         self,
         tracking_uri: str = "mlruns",
-        experiment_name: str = "devops-copilot",
+        experiment_name: str = "ci-failure-diagnosis",
     ):
         self.tracking_uri = tracking_uri
         self.experiment_name = experiment_name

@@ -6,7 +6,7 @@ This guide explains the automated CI/CD failure diagnosis workflow that has been
 
 When a CI/CD test fails on GitHub, an automated workflow:
 1. **Captures** the failure logs and test output
-2. **Runs** your DevOps Copilot API locally in the GitHub Actions environment
+2. **Runs** the diagnosis API locally in the GitHub Actions environment
 3. **Analyzes** the logs using RAG + LLM reasoning
 4. **Posts** suggestions and root cause diagnosis to the PR
 
@@ -20,7 +20,7 @@ artifacts: test-results/ (logs, coverage)
 Diagnose Workflow Triggers
     ↓
 [1] Download artifacts
-[2] Start Copilot API (FastAPI + FAISS)
+[2] Start diagnosis API (FastAPI + FAISS)
 [3] Run diagnosis script
 [4] Find associated PR
 [5] Post comment with diagnosis
@@ -115,7 +115,7 @@ You can add `workflow_dispatch` to trigger manually from GitHub UI:
 ```yaml
 on:
   workflow_run:
-    workflows: ["DevOps Copilot CI"]
+    workflows: ["CI Failure Diagnosis CI"]
     types: [completed]
   workflow_dispatch:  # Add this to manual trigger
 ```

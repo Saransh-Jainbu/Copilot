@@ -1,51 +1,24 @@
-:root {
-  --bg: #060d16;
-  --bg-2: #0a1a2b;
-  --card: rgba(9, 24, 40, 0.62);
-  --card-border: rgba(90, 225, 255, 0.25);
-  --text: #d8f1ff;
-  --muted: #7ba2bb;
-  --accent: #2de0ff;
-  --accent-2: #00b7e8;
-  --danger: #ff6f7f;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-* {
-  box-sizing: border-box;
-}
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
 
-html,
-body,
-#root {
-  min-height: 100%;
-}
+  body {
+    @apply m-0 bg-zinc-950 font-sans text-zinc-100 antialiased;
+    background:
+      radial-gradient(circle at 12% 2%, rgba(255, 255, 255, 0.08), transparent 36%),
+      radial-gradient(circle at 85% 18%, rgba(255, 255, 255, 0.05), transparent 42%),
+      linear-gradient(145deg, #060606, #0b0b0b);
+    background-attachment: fixed;
+  }
 
-body {
-  margin: 0;
-  color: var(--text);
-  font-family: "Space Grotesk", "Segoe UI", "Trebuchet MS", sans-serif;
-  background:
-    radial-gradient(circle at 15% 5%, rgba(0, 190, 255, 0.22), transparent 32%),
-    radial-gradient(circle at 90% 18%, rgba(45, 224, 255, 0.17), transparent 38%),
-    linear-gradient(140deg, var(--bg), var(--bg-2));
-  background-attachment: fixed;
-}
-
-h1,
-h2,
-h3,
-p {
-  margin: 0;
-}
-
-button,
-input,
-textarea {
-  font: inherit;
-}
-
-ul,
-ol {
-  margin: 0;
-  padding-left: 1.2rem;
+  * {
+    @apply border-zinc-800;
+  }
 }

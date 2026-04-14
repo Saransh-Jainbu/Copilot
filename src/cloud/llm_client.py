@@ -15,7 +15,9 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-HF_API_URL = "https://router.huggingface.co/featherless-ai/v1/completions"
+HF_API_URL = "https://router.huggingface.co/v1/chat/completions"
+DEFAULT_PRIMARY_MODEL = "openai/gpt-oss-120b:fastest"
+DEFAULT_FALLBACK_MODEL = "deepseek-ai/DeepSeek-R1:fastest"
 
 
 def _env_int(name: str, default: int) -> int:
@@ -42,16 +44,16 @@ def _env_float(name: str, default: float) -> float:
 
 
 class LLMClient:
-    """Client for HuggingFace Inference API.
+    """Client for Hugging Face Inference Providers.
 
-    Supports Mistral 7B (primary) and Phi-2 (fallback).
-    Includes retry logic and rate-limit handling.
+    Uses the OpenAI-compatible chat completions endpoint so the provider can
+    route to supported models. Includes retry logic and rate-limit handling.
     """
 
     def __init__(
         self,
-        primary_model: str = "mistralai/Mistral-7B-Instruct-v0.3",
-        fallback_model: str = "microsoft/phi-2",
+        primary_model: str = DEFAULT_PRIMARY_MODEL,
+        fallback_model: str = DEFAULT_FALLBACK_MODEL,
         api_token: Optional[str] = None,
         max_tokens: int = 320,
         temperature: float = 0.3,
@@ -111,12 +113,7 @@ class LLMClient:
                 "cached": True,
             }
 
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "max_tokens": requested_tokens,
-            "temperature": requested_temperature,
-        }
+        payload = self._build_payload(prompt, model, requested_tokens, requested_temperature)
 
         # Try primary model with retries.
         response_text = self._call_api(model, payload)
@@ -124,7 +121,13 @@ class LLMClient:
         # Fallback to secondary model.
         if response_text is None and model == self.primary_model:
             logger.warning("Primary model failed, falling back to %s", self.fallback_model)
-            response_text = self._call_api(self.fallback_model, payload)
+            fallback_payload = self._build_payload(
+                prompt,
+                self.fallback_model,
+                requested_tokens,
+                requested_temperature,
+            )
+            response_text = self._call_api(self.fallback_model, fallback_payload)
             if response_text is not None:
                 model = self.fallback_model
 
@@ -157,11 +160,55 @@ class LLMClient:
             self._response_cache.popitem(last=False)
         return response_data
 
+    def _build_payload(
+        self,
+        prompt: str,
+        model: str,
+        max_tokens: int,
+        temperature: float,
+    ) -> dict:
+        """Build an OpenAI-compatible chat completion payload."""
+        return {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False,
+        }
+
+    def _extract_text(self, result: object) -> str:
+        """Extract assistant text from a chat completion response."""
+        if isinstance(result, dict):
+            choices = result.get("choices", [])
+            if choices:
+                choice = choices[0]
+                if isinstance(choice, dict):
+                    message = choice.get("message")
+                    if isinstance(message, dict) and message.get("content"):
+                        return str(message.get("content"))
+                    if choice.get("text"):
+                        return str(choice.get("text"))
+                if hasattr(choice, "message"):
+                    message = getattr(choice, "message", None)
+                    if isinstance(message, dict) and message.get("content"):
+                        return str(message.get("content"))
+                    if hasattr(message, "content") and getattr(message, "content"):
+                        return str(getattr(message, "content"))
+            if result.get("generated_text"):
+                return str(result.get("generated_text"))
+        if isinstance(result, list) and result:
+            first = result[0]
+            if isinstance(first, dict) and first.get("generated_text"):
+                return str(first.get("generated_text"))
+        return str(result)
+
     def _call_api(self, model: str, payload: dict) -> Optional[str]:
-        """Call the HuggingFace Inference API with retry logic.
+        """Call the Hugging Face chat completions API with retry logic.
 
         Args:
-            model: Model name/path on HuggingFace.
+            model: Model name/path on Hugging Face.
             payload: Request payload.
 
         Returns:
@@ -179,13 +226,7 @@ class LLMClient:
                 )
 
                 if response.status_code == 200:
-                    result = response.json()
-                    choices = result.get("choices", []) if isinstance(result, dict) else []
-                    if choices:
-                        return choices[0].get("text", "")
-                    if isinstance(result, list) and len(result) > 0:
-                        return result[0].get("generated_text", "")
-                    return str(result)
+                    return self._extract_text(response.json())
 
                 if response.status_code == 503:
                     wait_time = response.json().get("estimated_time", 30)

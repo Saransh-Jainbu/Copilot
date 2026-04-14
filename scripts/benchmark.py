@@ -1,5 +1,5 @@
 """
-RAG Benchmark Suite for DevOps Copilot
+RAG Benchmark Suite for CI Failure Diagnosis
 Tests retrieval relevance, classification accuracy, and end-to-end latency.
 
 Usage: python scripts/benchmark.py
@@ -543,7 +543,7 @@ def generate_report(
 
 
 if __name__ == "__main__":
-    print("\n  DevOps Copilot - RAG Benchmark Suite")
+    print("\n  CI Failure Diagnosis - RAG Benchmark Suite")
     print("  " + "=" * 40)
 
     retrieval_results = run_retrieval_benchmark()

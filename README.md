@@ -1,8 +1,8 @@
-# DevOps Copilot
+# CI Failure Diagnosis
 
-Autonomous CI/CD debugging assistant powered by rule-based parsing, retrieval-augmented generation (RAG), and LLM reasoning.
+Reusable CI/CD debugging assistant powered by rule-based parsing, retrieval-augmented generation (RAG), and LLM reasoning.
 
-The project now runs as:
+The project runs as:
 
 - FastAPI backend in src/api
 - React + Vite frontend in web
@@ -11,10 +11,11 @@ The project now runs as:
 
 ## What Is Current In This Repo
 
-- Primary UI is React (web). Streamlit app in frontend/app.py is legacy.
+- Primary UI is React (web).
 - API endpoints are exposed under /api/* from src/api/main.py.
 - FAISS index artifacts are expected at data/faiss_index/index.faiss and data/faiss_index/metadata.json.
 - Render deploy config is in render.yaml and uses the root Dockerfile.
+- The cloud layer uses Hugging Face Inference API for generated text unless you reconfigure it.
 
 ## Architecture
 
@@ -22,7 +23,7 @@ Pipeline flow:
 
 1. Edge: preprocess + parse + classify failure logs
 2. Fog: embed query + retrieve relevant docs from FAISS
-3. Cloud: prompt LLM, reason, optionally self-critique, produce diagnosis and fixes
+3. Cloud: prompt an LLM endpoint, reason, optionally self-critique, produce diagnosis and fixes
 4. Ops: evaluate quality and track run metadata/history
 
 Core modules:
@@ -37,12 +38,19 @@ Core modules:
 - src/ops/evaluator.py
 - src/api/main.py
 
+Cloud model behavior:
+
+- The repository does not bundle a local LLM server.
+- Text generation currently goes through Hugging Face Inference API in src/cloud/llm_client.py.
+- Primary and fallback model IDs can be overridden with HF_PRIMARY_MODEL and HF_FALLBACK_MODEL.
+- If inference fails, the cloud agent falls back to rule-based diagnosis text and remediation templates.
+
 ## Project Structure
 
 Top-level layout (current):
 
 ```text
-Copilot/
+Project/
   configs/
     config.yaml
   data/
@@ -55,8 +63,6 @@ Copilot/
     Dockerfile.cloud
     Dockerfile.edge
     Dockerfile.fog
-  frontend/
-    app.py                     # legacy Streamlit UI
   scripts/
     benchmark.py
     benchmark_mteb.py
@@ -86,11 +92,72 @@ Copilot/
   requirements.txt
 ```
 
+## Reuse In Another Repo
+
+1. Copy the workflow files under `.github/workflows/` into the target repository.
+2. Update `HUGGINGFACE_API_TOKEN`, `HF_PRIMARY_MODEL`, and `HF_FALLBACK_MODEL` in the target repo's secrets or `.env` file.
+3. Rename the workflow, Docker image tag, and Render service name to match the new project.
+4. Update the prompt metadata and any docs or experiment names that should reflect the new repository.
+
+## One-Click GitHub Setup
+
+This repository now provides a reusable workflow that can be called from any project:
+
+- Reusable workflow: `.github/workflows/reusable-diagnose.yml`
+- Consumer template: `templates/github/one-click-diagnosis.yml`
+
+Quick install flow for another repository:
+
+1. Add one workflow file in the target repository using `templates/github/one-click-diagnosis.yml` as the source.
+2. Replace `<OWNER>/<REPO>` with the repository that hosts this toolkit.
+3. Ensure the target CI uploads an artifact named `test-results` (or change `artifacts-name`).
+4. Add `HUGGINGFACE_API_TOKEN` in target repository secrets.
+
+After that, every failed CI run can trigger diagnosis automatically and post a PR comment.
+
+## Centralized Onboarding Site (Vercel)
+
+If you want a centralized "Install" page:
+
+1. Create a small web page (for example in Vercel) with fields for owner/repo/ref.
+2. Generate the final YAML from `templates/github/one-click-diagnosis.yml` by replacing placeholders.
+3. Provide a copy button and a deep link to create a file in GitHub:
+
+`https://github.com/<target-owner>/<target-repo>/new/main/.github/workflows/ci-failure-diagnosis.yml`
+
+This gives a near one-click install experience without requiring users to understand workflow internals.
+
+## Production Auth And Security
+
+For production deployment of the onboarding dashboard, configure these values in `.env`:
+
+- `SESSION_SECRET`: long random secret used to sign session cookies
+- `SESSION_DB_PATH`: SQLite path for persistent session storage
+- `SESSION_COOKIE_SECURE=true` when running over HTTPS
+- `SESSION_COOKIE_DOMAIN`: optional shared domain for subdomain deployments
+- `OAUTH_STATE_TTL_SECONDS`: OAuth state lifetime (default 900)
+- `CORS_ORIGINS`: explicit frontend origins allowed for credentialed requests
+
+OAuth endpoints used by the dashboard:
+
+- `GET /api/auth/google/login`
+- `GET /api/auth/github/login`
+- `GET /api/auth/session`
+- `GET /api/github/repos`
+- `POST /api/github/initialize` (CSRF token required)
+
+Optional GitHub App installation entrypoint:
+
+- `GET /api/auth/github/app/install`
+
+This endpoint is enabled when `GITHUB_APP_NAME` is configured and can be linked from a centralized onboarding page.
+
 ## Prerequisites
 
 - Python 3.11+
 - Node.js 20+
 - Hugging Face token for cloud inference
+- Internet access for Hugging Face inference calls
 
 ## Environment Setup
 
@@ -126,6 +193,8 @@ Required in .env:
 
 ```env
 HUGGINGFACE_API_TOKEN=hf_xxx
+HF_PRIMARY_MODEL=openai/gpt-oss-120b:fastest
+HF_FALLBACK_MODEL=deepseek-ai/DeepSeek-R1:fastest
 LOG_LEVEL=INFO
 APP_ENV=development
 ```
@@ -164,6 +233,7 @@ Notes:
 - You can still change backend URL from the Analyze view input field.
 - To pin backend URL at build/dev time, set VITE_API_URL in web/.env.local.
 - API health check: GET http://127.0.0.1:8086/api/health
+- If Hugging Face rejects the configured model IDs, update HF_PRIMARY_MODEL and HF_FALLBACK_MODEL in .env.
 
 Example web/.env.local:
 
@@ -216,6 +286,11 @@ Returns recent in-memory debug runs (latest first, capped in process).
 ### GET /api/metrics
 
 Returns MLflow summary when available.
+
+### Cloud LLM behavior
+
+The cloud diagnosis layer uses an external LLM provider for generated prose.
+If the provider is unavailable or the model IDs are not supported, the agent returns a deterministic fallback diagnosis and fix suggestions.
 
 ## Data And Retrieval
 
@@ -275,13 +350,13 @@ Root Dockerfile runs FastAPI on container port 8000.
 Build image:
 
 ```bash
-docker build -t devops-copilot .
+docker build -t ci-failure-diagnosis .
 ```
 
 Run container and map to local 8086:
 
 ```bash
-docker run --rm -p 8086:8000 --env-file .env devops-copilot
+docker run --rm -p 8086:8000 --env-file .env ci-failure-diagnosis
 ```
 
 Health check:
@@ -295,8 +370,6 @@ Compose stack:
 ```bash
 docker compose -f docker/docker-compose.yml up --build
 ```
-
-Important: docker/docker-compose.yml still includes the legacy Streamlit frontend service. The modern React frontend is in web and is typically run separately for local development.
 
 ## Deployment
 
@@ -337,7 +410,10 @@ Includes:
    - data/faiss_index/metadata.json
 
 4. LLM call failures:
-   Verify HUGGINGFACE_API_TOKEN in .env and outbound internet access.
+  Verify HUGGINGFACE_API_TOKEN in .env, outbound internet access, and supported HF_PRIMARY_MODEL / HF_FALLBACK_MODEL values.
+
+5. Model unsupported by provider:
+  Change HF_PRIMARY_MODEL and HF_FALLBACK_MODEL to model IDs supported by your Hugging Face route.
 
 ## License
 

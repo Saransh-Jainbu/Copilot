@@ -32,7 +32,7 @@ class LogCollector:
         self.token = github_token or os.getenv("GITHUB_TOKEN", "")
         self.headers = {
             "Accept": "application/vnd.github+json",
-            "User-Agent": "devops-copilot-log-collector",
+            "User-Agent": "ci-failure-diagnosis-log-collector",
         }
         if self.token:
             self.headers["Authorization"] = f"token {self.token}"

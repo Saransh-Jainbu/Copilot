@@ -4,7 +4,6 @@ Evaluates the quality of debugging responses.
 """
 
 import logging
-import time
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)

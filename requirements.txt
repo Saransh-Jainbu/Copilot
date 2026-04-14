@@ -10,7 +10,6 @@ torch>=2.2.0
 # API & Web
 fastapi>=0.111.0
 uvicorn[standard]>=0.30.0
-streamlit>=1.35.0
 
 # MLOps
 mlflow>=2.13.0

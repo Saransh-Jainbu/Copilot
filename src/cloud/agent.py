@@ -6,6 +6,7 @@ Uses a multi-step reasoning workflow to analyze CI/CD failures.
 
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -77,7 +78,7 @@ class DebugResult:
 
 # --- Prompt Templates ---
 
-DIAGNOSIS_PROMPT = """You are DevOps Copilot, an expert CI/CD debugging assistant.
+DIAGNOSIS_PROMPT = """You are an expert CI/CD debugging assistant.
 
 ## Error Classification
 - **Type**: {error_type}
@@ -124,7 +125,7 @@ Be specific, actionable, and reference the documentation when relevant.
 Format your response with clear headers and bullet points.
 """
 
-DOCKER_REGISTRY_AUTH_PROMPT = """You are DevOps Copilot, an expert in Docker and CI/CD registry failures.
+DOCKER_REGISTRY_AUTH_PROMPT = """You are an expert in Docker and CI/CD registry failures.
 
 ## Error Classification
 - **Type**: {error_type}
@@ -170,7 +171,7 @@ Provide:
 Format with clear headers and bullet points.
 """
 
-DOCKER_IMAGE_NOT_FOUND_PROMPT = """You are DevOps Copilot, an expert in Docker image resolution failures.
+DOCKER_IMAGE_NOT_FOUND_PROMPT = """You are an expert in Docker image resolution failures.
 
 ## Error Classification
 - **Type**: {error_type}
@@ -206,7 +207,7 @@ Provide:
 Format with clear headers and bullet points.
 """
 
-K8S_INGRESS_ADMISSION_CERT_PROMPT = """You are DevOps Copilot, an expert in Kubernetes admission webhook TLS failures.
+K8S_INGRESS_ADMISSION_CERT_PROMPT = """You are an expert in Kubernetes admission webhook TLS failures.
 
 ## Error Classification
 - **Type**: {error_type}
@@ -263,7 +264,7 @@ Provide a brief critique and an improved version if needed.
 If the analysis is correct, respond with "APPROVED" followed by a confidence score (0-1).
 """
 
-LOW_CONFIDENCE_ABSTAIN_PROMPT = """You are DevOps Copilot, an expert CI/CD debugging assistant.
+LOW_CONFIDENCE_ABSTAIN_PROMPT = """You are an expert CI/CD debugging assistant.
 
 The error classifier could not identify this failure with high confidence.
 
@@ -404,18 +405,25 @@ class DebugAgent:
 
         llm_response = self.llm.generate(prompt, max_tokens=self.max_diagnosis_tokens)
         diagnosis_text = llm_response["text"]
+        llm_failed = bool(llm_response.get("error", False))
+        if llm_failed:
+            diagnosis_text = self._build_fallback_diagnosis(classification, parsed)
         trace.append(AgentStep(
             step_number=step_num,
             action=AgentAction.REASON.value,
             input_summary=f"Prompt ({len(prompt)} chars)",
             output_summary=f"Generated {len(diagnosis_text)} chars ({llm_response['latency_ms']}ms)",
             latency_ms=llm_response["latency_ms"],
-            metadata={"model": llm_response["model"], "tokens": llm_response["tokens_used"]},
+            metadata={
+                "model": llm_response["model"],
+                "tokens": llm_response["tokens_used"],
+                "llm_error": llm_failed,
+            },
         ))
 
         # --- Step 5: Self-Critique (optional) ---
         confidence = classification.confidence
-        if self.enable_self_critique and step_num < self.max_reasoning_steps:
+        if self.enable_self_critique and step_num < self.max_reasoning_steps and not llm_failed:
             step_num += 1
             step_start = time.time()
             critique_prompt = SELF_CRITIQUE_PROMPT.format(
@@ -451,6 +459,8 @@ class DebugAgent:
         fix_suggestions = self._extract_suggestions(diagnosis_text)
         fix_suggestions = self._filter_suggestions(fix_suggestions, parsed)
         patch = self._extract_patch(diagnosis_text)
+        if patch.startswith("No specific patch generated"):
+            patch = self._build_fallback_patch(classification, parsed)
 
         total_ms = int((time.time() - total_start) * 1000)
 
@@ -719,14 +729,157 @@ class DebugAgent:
 
         return suggestions[:10]
 
+    def _build_fallback_diagnosis(
+        self,
+        classification: ClassificationResult,
+        parsed: Optional[Any],
+    ) -> str:
+        """Build deterministic diagnosis text when LLM inference fails.
+
+        This keeps API responses actionable even if model routing/auth is unavailable.
+        """
+        error_message = "N/A"
+        failing_line = "N/A"
+
+        if parsed:
+            if parsed.error_message:
+                error_message = parsed.error_message.strip()
+            if parsed.error_lines:
+                failing_line = parsed.error_lines[0].strip()
+
+        return (
+            "## Root Cause Diagnosis\n"
+            "Model inference was unavailable during this run, so this diagnosis is based on parsed log evidence.\n\n"
+            f"- Classified failure type: {classification.category}\n"
+            f"- Primary error message: {error_message}\n"
+            f"- Key failing line: {failing_line}\n\n"
+            "## Fix Suggestions\n"
+            "Use the suggestions below, which come from rule-based remediation templates and parsed evidence.\n"
+        )
+
     def _extract_patch(self, text: str) -> str:
         """Extract code patch content from LLM output."""
         # Look for code blocks
-        import re
         code_blocks = re.findall(r"```[\w]*\n(.*?)```", text, re.DOTALL)
         if code_blocks:
             return "\n\n".join(code_blocks)
         return "No specific patch generated. See fix suggestions above."
+
+    def _build_fallback_patch(
+        self,
+        classification: ClassificationResult,
+        parsed: Optional[Any],
+    ) -> str:
+        """Build deterministic patch text when LLM patch extraction is unavailable."""
+        category = (classification.category or "").strip().lower()
+        message_blob = " ".join(
+            [
+                parsed.error_message if parsed else "",
+                " ".join(parsed.error_lines) if parsed else "",
+                " ".join(parsed.context_lines) if parsed else "",
+            ]
+        )
+
+        if category in ("dependency_error", "python_dependency"):
+            module = self._infer_missing_python_module(message_blob)
+            if module:
+                if module.lower() in {"src", "tests"}:
+                    return (
+                        "# .github/workflows/ci.yml (install project package before tests)\n"
+                        "- name: Install project and dependencies\n"
+                        "  run: |\n"
+                        "    python -m pip install --upgrade pip setuptools wheel\n"
+                        "    python -m pip install -e .\n"
+                        "    python -m pip install -r requirements.txt\n\n"
+                        "# Alternative if package install is not available\n"
+                        "# export PYTHONPATH=${PYTHONPATH}:${PWD}"
+                    )
+                return (
+                    "# requirements.txt\n"
+                    f"{module}>=<pin-known-good-version>\n\n"
+                    "# CI step (example)\n"
+                    "python -m pip install --upgrade pip setuptools wheel\n"
+                    "python -m pip install -r requirements.txt"
+                )
+            return (
+                "# requirements.txt\n"
+                "<failing-package>>=<pin-known-good-version>\n\n"
+                "# CI step (example)\n"
+                "python -m pip install --upgrade pip setuptools wheel\n"
+                "python -m pip check"
+            )
+
+        if category == "nodejs_dependency":
+            package = self._infer_missing_node_package(message_blob)
+            if package:
+                return (
+                    "// package.json\n"
+                    "{\n"
+                    "  \"dependencies\": {\n"
+                    f"    \"{package}\": \"<pin-known-good-version>\"\n"
+                    "  }\n"
+                    "}\n\n"
+                    "# CI step (example)\n"
+                    "npm ci"
+                )
+            return (
+                "# CI step (example)\n"
+                "rm -rf node_modules package-lock.json\n"
+                "npm cache clean --force\n"
+                "npm install"
+            )
+
+        return "No specific patch generated. See fix suggestions above."
+
+    def _infer_missing_python_module(self, message_blob: str) -> Optional[str]:
+        """Infer missing Python package name from common import error patterns."""
+        if not message_blob:
+            return None
+
+        patterns = [
+            r"No module named ['\"]([^'\"]+)['\"]",
+            r"ModuleNotFoundError:\s*No module named ['\"]([^'\"]+)['\"]",
+            r"ImportError while importing test module ['\"][^'\"]+['\"]",
+        ]
+
+        raw_module = None
+        for pattern in patterns:
+            match = re.search(pattern, message_blob, re.IGNORECASE)
+            if match and match.groups():
+                raw_module = match.group(1) if len(match.groups()) > 0 else None
+                if raw_module:
+                    break
+
+        if not raw_module:
+            return None
+
+        module = raw_module.split(".")[0].strip()
+        package_map = {
+            "sklearn": "scikit-learn",
+            "cv2": "opencv-python",
+            "yaml": "PyYAML",
+            "pil": "Pillow",
+            "bs4": "beautifulsoup4",
+            "dotenv": "python-dotenv",
+        }
+        return package_map.get(module.lower(), module)
+
+    def _infer_missing_node_package(self, message_blob: str) -> Optional[str]:
+        """Infer missing Node package name from npm/yarn error patterns."""
+        if not message_blob:
+            return None
+
+        patterns = [
+            r"Cannot find module ['\"]([^'\"]+)['\"]",
+            r"npm ERR!\s+404\s+Not Found\s+-\s+GET\s+[^\s]+/([^\s/]+)",
+            r"Could not resolve dependency:\s*([^\s@]+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, message_blob, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+
+        return None
 
     def _filter_suggestions(self, suggestions: list[str], parsed: Optional[Any]) -> list[str]:
         """Filter low-relevance LLM suggestions using subtype-aware heuristics.

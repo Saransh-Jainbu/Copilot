@@ -141,6 +141,28 @@ class TestDebugAgent:
         # Without self-critique, fewer LLM calls expected
         assert result.total_latency_ms >= 0
 
+    def test_debug_generates_fallback_patch_when_llm_fails(self, mock_classifier, mock_retriever, mock_preprocessor):
+        failing_llm = MagicMock()
+        failing_llm.generate.return_value = {
+            "text": "Error: Unable to generate response from any model.",
+            "model": "openai/gpt-oss-120b:fastest",
+            "latency_ms": 100,
+            "tokens_used": 0,
+            "error": True,
+        }
+
+        agent = DebugAgent(
+            llm_client=failing_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+
+        result = agent.debug("ModuleNotFoundError: No module named 'numpy'")
+        assert "requirements.txt" in result.patch_recommendation
+        assert "numpy" in result.patch_recommendation
+        assert "No specific patch generated" not in result.patch_recommendation
+
 
 # ---- Helper Method Tests ----
 
@@ -190,6 +212,27 @@ class TestAgentHelpers:
         text = "Some explanation\n```\nnumpy>=1.24.0\nflask>=2.0\n```\nMore text."
         patch = agent._extract_patch(text)
         assert "numpy" in patch
+
+    def test_build_fallback_patch_for_dependency_error(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        classification = ClassificationResult(
+            category="dependency_error",
+            confidence=0.9,
+            reasoning="",
+            parsed_log=ParsedLog(
+                error_message="ModuleNotFoundError: No module named 'yaml'",
+                error_lines=["ModuleNotFoundError: No module named 'yaml'"],
+            ),
+        )
+
+        patch = agent._build_fallback_patch(classification, classification.parsed_log)
+        assert "requirements.txt" in patch
+        assert "PyYAML" in patch
 
     def test_build_retrieval_query_uses_error_evidence(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
         agent = DebugAgent(

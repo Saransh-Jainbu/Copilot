@@ -6,6 +6,7 @@ Uses a multi-step reasoning workflow to analyze CI/CD failures.
 
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -458,6 +459,8 @@ class DebugAgent:
         fix_suggestions = self._extract_suggestions(diagnosis_text)
         fix_suggestions = self._filter_suggestions(fix_suggestions, parsed)
         patch = self._extract_patch(diagnosis_text)
+        if patch.startswith("No specific patch generated"):
+            patch = self._build_fallback_patch(classification, parsed)
 
         total_ms = int((time.time() - total_start) * 1000)
 
@@ -759,11 +762,115 @@ class DebugAgent:
     def _extract_patch(self, text: str) -> str:
         """Extract code patch content from LLM output."""
         # Look for code blocks
-        import re
         code_blocks = re.findall(r"```[\w]*\n(.*?)```", text, re.DOTALL)
         if code_blocks:
             return "\n\n".join(code_blocks)
         return "No specific patch generated. See fix suggestions above."
+
+    def _build_fallback_patch(
+        self,
+        classification: ClassificationResult,
+        parsed: Optional[Any],
+    ) -> str:
+        """Build deterministic patch text when LLM patch extraction is unavailable."""
+        category = (classification.category or "").strip().lower()
+        message_blob = " ".join(
+            [
+                parsed.error_message if parsed else "",
+                " ".join(parsed.error_lines) if parsed else "",
+                " ".join(parsed.context_lines) if parsed else "",
+            ]
+        )
+
+        if category in ("dependency_error", "python_dependency"):
+            module = self._infer_missing_python_module(message_blob)
+            if module:
+                return (
+                    "# requirements.txt\n"
+                    f"{module}>=<pin-known-good-version>\n\n"
+                    "# CI step (example)\n"
+                    "python -m pip install --upgrade pip setuptools wheel\n"
+                    "python -m pip install -r requirements.txt"
+                )
+            return (
+                "# requirements.txt\n"
+                "<failing-package>>=<pin-known-good-version>\n\n"
+                "# CI step (example)\n"
+                "python -m pip install --upgrade pip setuptools wheel\n"
+                "python -m pip check"
+            )
+
+        if category == "nodejs_dependency":
+            package = self._infer_missing_node_package(message_blob)
+            if package:
+                return (
+                    "// package.json\n"
+                    "{\n"
+                    "  \"dependencies\": {\n"
+                    f"    \"{package}\": \"<pin-known-good-version>\"\n"
+                    "  }\n"
+                    "}\n\n"
+                    "# CI step (example)\n"
+                    "npm ci"
+                )
+            return (
+                "# CI step (example)\n"
+                "rm -rf node_modules package-lock.json\n"
+                "npm cache clean --force\n"
+                "npm install"
+            )
+
+        return "No specific patch generated. See fix suggestions above."
+
+    def _infer_missing_python_module(self, message_blob: str) -> Optional[str]:
+        """Infer missing Python package name from common import error patterns."""
+        if not message_blob:
+            return None
+
+        patterns = [
+            r"No module named ['\"]([^'\"]+)['\"]",
+            r"ModuleNotFoundError:\s*No module named ['\"]([^'\"]+)['\"]",
+            r"ImportError while importing test module ['\"][^'\"]+['\"]",
+        ]
+
+        raw_module = None
+        for pattern in patterns:
+            match = re.search(pattern, message_blob, re.IGNORECASE)
+            if match and match.groups():
+                raw_module = match.group(1) if len(match.groups()) > 0 else None
+                if raw_module:
+                    break
+
+        if not raw_module:
+            return None
+
+        module = raw_module.split(".")[0].strip()
+        package_map = {
+            "sklearn": "scikit-learn",
+            "cv2": "opencv-python",
+            "yaml": "PyYAML",
+            "pil": "Pillow",
+            "bs4": "beautifulsoup4",
+            "dotenv": "python-dotenv",
+        }
+        return package_map.get(module.lower(), module)
+
+    def _infer_missing_node_package(self, message_blob: str) -> Optional[str]:
+        """Infer missing Node package name from npm/yarn error patterns."""
+        if not message_blob:
+            return None
+
+        patterns = [
+            r"Cannot find module ['\"]([^'\"]+)['\"]",
+            r"npm ERR!\s+404\s+Not Found\s+-\s+GET\s+[^\s]+/([^\s/]+)",
+            r"Could not resolve dependency:\s*([^\s@]+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, message_blob, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+
+        return None
 
     def _filter_suggestions(self, suggestions: list[str], parsed: Optional[Any]) -> list[str]:
         """Filter low-relevance LLM suggestions using subtype-aware heuristics.

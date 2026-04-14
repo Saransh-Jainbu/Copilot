@@ -22,6 +22,7 @@ data/faiss_index/*.faiss
 data/docs/*.html
 data/docs/official/
 data/processed/stackoverflow/
+data/sessions.db
 
 # MLflow
 mlruns/

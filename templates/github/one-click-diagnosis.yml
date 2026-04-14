@@ -8,7 +8,7 @@ on:
 
 jobs:
   diagnose:
-    if: github.event.workflow_run.conclusion == 'failure'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure')
     uses: <OWNER>/<REPO>/.github/workflows/reusable-diagnose.yml@main
     with:
       artifacts-name: test-results

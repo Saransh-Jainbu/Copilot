@@ -85,9 +85,31 @@ function getDefaultApiUrl() {
   return `${protocol}//${hostname}`
 }
 
+function normalizeLocalApiUrl(rawUrl: string) {
+  const value = (rawUrl || '').trim()
+  if (!value) {
+    return value
+  }
+
+  try {
+    const parsed = new URL(value)
+    const currentHost = window.location.hostname
+    const isLoopback = (host: string) => host === '127.0.0.1' || host === 'localhost'
+
+    if (isLoopback(parsed.hostname) && isLoopback(currentHost) && parsed.hostname !== currentHost) {
+      parsed.hostname = currentHost
+      return parsed.toString().replace(/\/$/, '')
+    }
+
+    return value.replace(/\/$/, '')
+  } catch {
+    return value.replace(/\/$/, '')
+  }
+}
+
 function ConsolePage() {
   const [view, setView] = useState<View>('dashboard')
-  const [apiUrl, setApiUrl] = useState(localStorage.getItem('copilot-api-url') || getDefaultApiUrl())
+  const [apiUrl, setApiUrl] = useState(() => normalizeLocalApiUrl(localStorage.getItem('copilot-api-url') || getDefaultApiUrl()))
   const [logText, setLogText] = useState(SAMPLE_LOG)
   const [enableRag, setEnableRag] = useState(true)
   const [enableSelfCritique, setEnableSelfCritique] = useState(true)
@@ -264,13 +286,13 @@ function ConsolePage() {
 
   async function autoDetectBackendUrl() {
     const candidates = [
-      localStorage.getItem('copilot-api-url') || '',
       getDefaultApiUrl(),
+      localStorage.getItem('copilot-api-url') || '',
       'http://127.0.0.1:8086',
       'http://localhost:8086',
       'http://127.0.0.1:8000',
       'http://localhost:8000',
-    ].filter(Boolean)
+    ].map(normalizeLocalApiUrl).filter(Boolean)
 
     const seen = new Set<string>()
     const uniqueCandidates = candidates.filter((url) => {

@@ -234,6 +234,19 @@ def _render_workflow_template(ci_workflow_name: str) -> str:
     toolkit_repo = os.getenv("GITHUB_TOOLKIT_REPO", "<OWNER>/<REPO>").strip()
     toolkit_ref = os.getenv("GITHUB_TOOLKIT_REF", "main").strip()
 
+    if (
+        not toolkit_repo
+        or toolkit_repo == "<OWNER>/<REPO>"
+        or "/" not in toolkit_repo
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "GITHUB_TOOLKIT_REPO is not configured. "
+                "Set it to the owner/repo that contains reusable-diagnose.yml."
+            ),
+        )
+
     safe_workflow_name = re.sub(r"[^\w .\-]", "", (ci_workflow_name or "CI")).strip() or "CI"
 
     workflow = template.replace(
@@ -612,7 +625,7 @@ async def github_login(request: Request, next: Optional[str] = None):
         {
             "client_id": client_id,
             "redirect_uri": redirect_uri,
-            "scope": "repo read:user",
+            "scope": "repo read:user workflow",
             "state": state,
         }
     )
@@ -757,6 +770,17 @@ async def initialize_github_repo(request: Request, payload: GithubInitializeRequ
     repo_json = repo_resp.json()
     branch = payload.branch or repo_json.get("default_branch") or "main"
     workflow_content = _render_workflow_template(payload.ci_workflow_name)
+
+    # GitHub requires the `workflow` OAuth scope to create/update files under .github/workflows.
+    oauth_scopes = (repo_resp.headers.get("X-OAuth-Scopes") or "").lower()
+    if oauth_scopes and "workflow" not in oauth_scopes:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "GitHub token is missing the 'workflow' scope. "
+                "Reconnect GitHub from the dashboard to grant updated permissions."
+            ),
+        )
 
     existing_sha = None
     existing_resp = requests.get(

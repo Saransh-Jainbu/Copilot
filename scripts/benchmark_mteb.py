@@ -1,5 +1,5 @@
 """
-Industry-Standard Benchmarks for DevOps Copilot
+Industry-Standard Benchmarks for CI Failure Diagnosis
 
 Runs reputed benchmarks against the embedding model (all-MiniLM-L6-v2):
   1. MTEB/BEIR Retrieval Benchmarks — the gold standard for embedding models
@@ -182,7 +182,7 @@ def run_mteb_retrieval_benchmarks():
 
 
 if __name__ == "__main__":
-    print("\n  DevOps Copilot - Industry-Standard Benchmarks")
+    print("\n  CI Failure Diagnosis - Industry-Standard Benchmarks")
     print("  " + "=" * 50)
     print("  Using MTEB/BEIR (Massive Text Embedding Benchmark)")
     print("  Same benchmarks as HuggingFace MTEB Leaderboard")

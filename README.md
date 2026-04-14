@@ -1,6 +1,6 @@
-# DevOps Copilot
+# CI Failure Diagnosis
 
-Autonomous CI/CD debugging assistant powered by rule-based parsing, retrieval-augmented generation (RAG), and LLM reasoning.
+Reusable CI/CD debugging assistant powered by rule-based parsing, retrieval-augmented generation (RAG), and LLM reasoning.
 
 The project runs as:
 
@@ -50,7 +50,7 @@ Cloud model behavior:
 Top-level layout (current):
 
 ```text
-Copilot/
+Project/
   configs/
     config.yaml
   data/
@@ -91,6 +91,13 @@ Copilot/
   render.yaml
   requirements.txt
 ```
+
+## Reuse In Another Repo
+
+1. Copy the workflow files under `.github/workflows/` into the target repository.
+2. Update `HUGGINGFACE_API_TOKEN`, `HF_PRIMARY_MODEL`, and `HF_FALLBACK_MODEL` in the target repo's secrets or `.env` file.
+3. Rename the workflow, Docker image tag, and Render service name to match the new project.
+4. Update the prompt metadata and any docs or experiment names that should reflect the new repository.
 
 ## Prerequisites
 
@@ -133,8 +140,8 @@ Required in .env:
 
 ```env
 HUGGINGFACE_API_TOKEN=hf_xxx
-HF_PRIMARY_MODEL=mistralai/Mistral-7B-Instruct-v0.3
-HF_FALLBACK_MODEL=microsoft/phi-2
+HF_PRIMARY_MODEL=openai/gpt-oss-120b:fastest
+HF_FALLBACK_MODEL=deepseek-ai/DeepSeek-R1:fastest
 LOG_LEVEL=INFO
 APP_ENV=development
 ```
@@ -290,13 +297,13 @@ Root Dockerfile runs FastAPI on container port 8000.
 Build image:
 
 ```bash
-docker build -t devops-copilot .
+docker build -t ci-failure-diagnosis .
 ```
 
 Run container and map to local 8086:
 
 ```bash
-docker run --rm -p 8086:8000 --env-file .env devops-copilot
+docker run --rm -p 8086:8000 --env-file .env ci-failure-diagnosis
 ```
 
 Health check:

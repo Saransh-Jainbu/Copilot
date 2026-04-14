@@ -77,7 +77,7 @@ class DebugResult:
 
 # --- Prompt Templates ---
 
-DIAGNOSIS_PROMPT = """You are DevOps Copilot, an expert CI/CD debugging assistant.
+DIAGNOSIS_PROMPT = """You are an expert CI/CD debugging assistant.
 
 ## Error Classification
 - **Type**: {error_type}
@@ -124,7 +124,7 @@ Be specific, actionable, and reference the documentation when relevant.
 Format your response with clear headers and bullet points.
 """
 
-DOCKER_REGISTRY_AUTH_PROMPT = """You are DevOps Copilot, an expert in Docker and CI/CD registry failures.
+DOCKER_REGISTRY_AUTH_PROMPT = """You are an expert in Docker and CI/CD registry failures.
 
 ## Error Classification
 - **Type**: {error_type}
@@ -170,7 +170,7 @@ Provide:
 Format with clear headers and bullet points.
 """
 
-DOCKER_IMAGE_NOT_FOUND_PROMPT = """You are DevOps Copilot, an expert in Docker image resolution failures.
+DOCKER_IMAGE_NOT_FOUND_PROMPT = """You are an expert in Docker image resolution failures.
 
 ## Error Classification
 - **Type**: {error_type}
@@ -206,7 +206,7 @@ Provide:
 Format with clear headers and bullet points.
 """
 
-K8S_INGRESS_ADMISSION_CERT_PROMPT = """You are DevOps Copilot, an expert in Kubernetes admission webhook TLS failures.
+K8S_INGRESS_ADMISSION_CERT_PROMPT = """You are an expert in Kubernetes admission webhook TLS failures.
 
 ## Error Classification
 - **Type**: {error_type}
@@ -263,7 +263,7 @@ Provide a brief critique and an improved version if needed.
 If the analysis is correct, respond with "APPROVED" followed by a confidence score (0-1).
 """
 
-LOW_CONFIDENCE_ABSTAIN_PROMPT = """You are DevOps Copilot, an expert CI/CD debugging assistant.
+LOW_CONFIDENCE_ABSTAIN_PROMPT = """You are an expert CI/CD debugging assistant.
 
 The error classifier could not identify this failure with high confidence.
 

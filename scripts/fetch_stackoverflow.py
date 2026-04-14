@@ -48,7 +48,7 @@ def api_get(url):
 
     try:
         req = urllib.request.Request(url, headers={
-            "User-Agent": "DevOps-Copilot/1.0",
+            "User-Agent": "CI-Failure-Diagnosis/1.0",
             "Accept-Encoding": "gzip",
         })
         with urllib.request.urlopen(req, timeout=30) as resp:

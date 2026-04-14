@@ -1,4 +1,4 @@
-name: DevOps Copilot CI
+name: CI Failure Diagnosis CI
 
 permissions:
   contents: read
@@ -74,14 +74,14 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t devops-copilot:${{ github.sha }} .
+        run: docker build -t ci-failure-diagnosis:${{ github.sha }} .
 
       - name: Test Docker image
         run: |
-          docker run --rm -d --name copilot-test -p 8000:8000 devops-copilot:${{ github.sha }}
+          docker run --rm -d --name diagnosis-test -p 8000:8000 ci-failure-diagnosis:${{ github.sha }}
           sleep 5
           curl -f http://localhost:8000/api/health || exit 1
-          docker stop copilot-test
+          docker stop diagnosis-test
 
   diagnose:
     runs-on: ubuntu-latest
@@ -108,7 +108,7 @@ jobs:
           pip install -r requirements.txt --quiet
           pip install requests --quiet
 
-      - name: Start Copilot API
+      - name: Start diagnosis API
         env:
           HUGGINGFACE_API_TOKEN: ${{ secrets.HUGGINGFACE_API_TOKEN }}
         run: |

@@ -1,8 +1,8 @@
-# DevOps Copilot - Central Configuration
+# CI Failure Diagnosis - Central Configuration
 # ========================================
 
 app:
-  name: "DevOps Copilot"
+  name: "CI Failure Diagnosis"
   version: "0.1.0"
   debug: false
 
@@ -39,8 +39,8 @@ fog:
 cloud:
   llm:
     provider: "huggingface"
-    primary_model: "mistralai/Mistral-7B-Instruct-v0.3"
-    fallback_model: "microsoft/phi-2"
+    primary_model: "openai/gpt-oss-120b:fastest"
+    fallback_model: "deepseek-ai/DeepSeek-R1:fastest"
     max_tokens: 2048
     temperature: 0.3
     timeout_seconds: 60
@@ -53,7 +53,7 @@ cloud:
 ops:
   mlflow:
     tracking_uri: "mlruns"
-    experiment_name: "devops-copilot"
+    experiment_name: "ci-failure-diagnosis"
   prompt_registry:
     prompts_dir: "src/cloud/prompts"
     default_version: "v1"

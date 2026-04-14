@@ -1,1 +1,1 @@
-# DevOps Copilot - Ops (LLMOps & AgentOps)
+# CI Failure Diagnosis - Ops (LLMOps & AgentOps)

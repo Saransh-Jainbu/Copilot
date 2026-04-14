@@ -33,7 +33,7 @@ lint-fix:
 
 # --- Docker ---
 docker-build:
-	docker build -t devops-copilot .
+	docker build -t ci-failure-diagnosis .
 
 docker-up:
 	docker-compose -f docker/docker-compose.yml up --build

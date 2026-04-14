@@ -1,5 +1,5 @@
 """
-Diagnose workflow failures using the DevOps Copilot API.
+Diagnose workflow failures using the CI failure diagnosis API.
 
 This script is invoked by GitHub Actions to:
 1. Collect failure logs from the workflow
@@ -127,7 +127,7 @@ def collect_local_logs(search_dir: Path = Path(".")) -> str:
 
 
 def diagnose_failure(api_url: str, log_text: str) -> dict:
-    """Call the DevOps Copilot API to diagnose the failure."""
+    """Call the diagnosis API to analyze the failure."""
     if not log_text:
         logger.error("No log text provided for diagnosis")
         return None
@@ -173,7 +173,7 @@ def main():
     parser = argparse.ArgumentParser(description="Diagnose workflow failures")
     parser.add_argument("--workflow-id", type=int, help="GitHub workflow run ID (optional, for logging)")
     parser.add_argument("--run-number", type=int, help="Workflow run number (optional)")
-    parser.add_argument("--api-url", default="http://127.0.0.1:8000", help="Copilot API URL")
+    parser.add_argument("--api-url", default="http://127.0.0.1:8000", help="Diagnosis API URL")
     parser.add_argument("--artifacts-dir", default="artifacts", help="Directory containing downloaded artifacts")
     
     args = parser.parse_args()
@@ -193,7 +193,7 @@ def main():
             sys.exit(0)
         
         # Diagnose
-        logger.info("Calling Copilot API for diagnosis...")
+        logger.info("Calling diagnosis API for analysis...")
         diagnosis = diagnose_failure(args.api_url, logs)
         
         if not diagnosis:

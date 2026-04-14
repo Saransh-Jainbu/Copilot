@@ -1,6 +1,6 @@
 """
 API Layer: FastAPI Application
-Main entry point for the DevOps Copilot backend API.
+Main entry point for the CI failure diagnosis backend API.
 """
 
 import logging
@@ -142,7 +142,7 @@ def _append_history(response_data: DebugResponse) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
-    logger.info("DevOps Copilot API starting up...")
+    logger.info("CI diagnosis API starting up...")
     _get_llm_client()
     _get_classifier()
     _get_preprocessor()
@@ -154,14 +154,14 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.warning("Embedding preload failed: %s", exc)
     yield
-    logger.info("DevOps Copilot API shutting down...")
+    logger.info("CI diagnosis API shutting down...")
 
 
 # --- App ---
 
 app = FastAPI(
-    title="DevOps Copilot API",
-    description="Autonomous CI/CD Debugging Agent powered by LLMs",
+    title="CI Failure Diagnosis API",
+    description="Autonomous CI/CD debugging agent powered by rules, retrieval, and LLMs",
     version="0.1.0",
     lifespan=lifespan,
 )

@@ -124,12 +124,18 @@ jobs:
             const confidence = ((diagnosis.confidence || 0) * 100).toFixed(1);
             const latency = diagnosis.total_latency_ms || 'N/A';
             const diagnosis_text = diagnosis.diagnosis || 'Unable to determine root cause';
+            const root_cause_text = diagnosis_text
+              .replace(/\r/g, '')
+              .replace(/^\s*#{2,3}\s*Root Cause Diagnosis\s*/i, '')
+              .replace(/(^|\n)#{2,3}\s*Fix Suggestions[\s\S]*$/i, '')
+              .replace(/(^|\n)#{2,3}\s*Patch Recommendation[\s\S]*$/i, '')
+              .trim();
             const suggestions = (diagnosis.fix_suggestions || []).slice(0, 5);
             const patch = diagnosis.patch_recommendation || '';
             
             let comment = `## 🔍 Automated CI/CD Failure Diagnosis\n\n`;
             comment += `**Issue Type:** ${issue_type}\n\n`;
-            comment += `### Root Cause\n${diagnosis_text}\n\n`;
+            comment += `### Root Cause\n${root_cause_text || diagnosis_text}\n\n`;
             comment += `### Suggested Fixes\n`;
             
             for (let i = 0; i < suggestions.length; i++) {

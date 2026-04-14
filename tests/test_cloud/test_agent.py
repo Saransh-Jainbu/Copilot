@@ -234,6 +234,28 @@ class TestAgentHelpers:
         assert "requirements.txt" in patch
         assert "PyYAML" in patch
 
+    def test_build_fallback_patch_for_src_import_error(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
+        agent = DebugAgent(
+            llm_client=mock_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+        classification = ClassificationResult(
+            category="dependency_error",
+            confidence=0.9,
+            reasoning="",
+            parsed_log=ParsedLog(
+                error_message="ModuleNotFoundError: No module named 'src'",
+                error_lines=["ModuleNotFoundError: No module named 'src'"],
+            ),
+        )
+
+        patch = agent._build_fallback_patch(classification, classification.parsed_log)
+        assert "python -m pip install -e ." in patch
+        assert "PYTHONPATH" in patch
+        assert "src>=<pin-known-good-version>" not in patch
+
     def test_build_retrieval_query_uses_error_evidence(self, mock_llm, mock_classifier, mock_retriever, mock_preprocessor):
         agent = DebugAgent(
             llm_client=mock_llm,

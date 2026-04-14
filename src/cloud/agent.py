@@ -754,9 +754,7 @@ class DebugAgent:
             f"- Primary error message: {error_message}\n"
             f"- Key failing line: {failing_line}\n\n"
             "## Fix Suggestions\n"
-            "Use the suggestions below, which come from rule-based remediation templates and parsed evidence.\n\n"
-            "## Patch Recommendation\n"
-            "No specific patch generated. See fix suggestions above."
+            "Use the suggestions below, which come from rule-based remediation templates and parsed evidence.\n"
         )
 
     def _extract_patch(self, text: str) -> str:
@@ -785,6 +783,17 @@ class DebugAgent:
         if category in ("dependency_error", "python_dependency"):
             module = self._infer_missing_python_module(message_blob)
             if module:
+                if module.lower() in {"src", "tests"}:
+                    return (
+                        "# .github/workflows/ci.yml (install project package before tests)\n"
+                        "- name: Install project and dependencies\n"
+                        "  run: |\n"
+                        "    python -m pip install --upgrade pip setuptools wheel\n"
+                        "    python -m pip install -e .\n"
+                        "    python -m pip install -r requirements.txt\n\n"
+                        "# Alternative if package install is not available\n"
+                        "# export PYTHONPATH=${PYTHONPATH}:${PWD}"
+                    )
                 return (
                     "# requirements.txt\n"
                     f"{module}>=<pin-known-good-version>\n\n"

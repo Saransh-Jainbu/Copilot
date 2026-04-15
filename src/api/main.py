@@ -101,7 +101,6 @@ _oauth_state_store: dict[str, dict[str, Any]] = {}
 
 _SESSION_COOKIE_NAME = "ci_diag_session"
 _SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
-_SESSION_DB_PATH = os.getenv("SESSION_DB_PATH", "data/sessions.db")
 _DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 _SESSION_SECRET = os.getenv("SESSION_SECRET", "").strip()
 _SESSION_COOKIE_DOMAIN = os.getenv("SESSION_COOKIE_DOMAIN", "").strip() or None
@@ -111,9 +110,8 @@ _OAUTH_STATE_TTL_SECONDS = int(os.getenv("OAUTH_STATE_TTL_SECONDS", "900"))
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _WORKFLOW_TEMPLATE_PATH = _PROJECT_ROOT / "templates" / "github" / "one-click-diagnosis.yml"
 _persistent_sessions = create_session_store(
-    db_path=_SESSION_DB_PATH,
-    ttl_seconds=_SESSION_TTL_SECONDS,
     database_url=_DATABASE_URL,
+    ttl_seconds=_SESSION_TTL_SECONDS,
 )
 
 if not _SESSION_SECRET:

@@ -379,6 +379,8 @@ Required environment variables on Render:
 - `FRONTEND_URL`
 - `CORS_ORIGINS`
 
+Session persistence is Postgres-only in this project. If `DATABASE_URL` is missing, the API fails fast on startup.
+
 Recommended values:
 
 - `API_BASE_URL`: your public Render backend URL, for example `https://ci-failure-diagnosis-api.onrender.com`

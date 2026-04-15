@@ -372,7 +372,9 @@ What Render should use:
 Required environment variables on Render:
 
 - `HUGGINGFACE_API_TOKEN`
+- `DATABASE_URL`
 - `SESSION_SECRET`
+- `SESSION_COOKIE_SAMESITE`
 - `API_BASE_URL`
 - `FRONTEND_URL`
 - `CORS_ORIGINS`
@@ -382,6 +384,8 @@ Recommended values:
 - `API_BASE_URL`: your public Render backend URL, for example `https://ci-failure-diagnosis-api.onrender.com`
 - `FRONTEND_URL`: your public Vercel frontend URL, for example `https://your-app.vercel.app`
 - `CORS_ORIGINS`: comma-separated list containing your Vercel URL and local dev URLs
+- `SESSION_COOKIE_SAMESITE`: `none` when frontend and backend are on different domains
+- `DATABASE_URL`: Postgres connection string (for example Neon with `sslmode=require`)
 
 ### Vercel Frontend
 

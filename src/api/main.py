@@ -15,7 +15,7 @@ from base64 import urlsafe_b64encode
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 from dotenv import load_dotenv
 import requests
@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from src.api.session_store import SQLiteSessionStore
+from src.api.session_store import create_session_store
 
 load_dotenv()
 
@@ -102,13 +102,19 @@ _oauth_state_store: dict[str, dict[str, Any]] = {}
 _SESSION_COOKIE_NAME = "ci_diag_session"
 _SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
 _SESSION_DB_PATH = os.getenv("SESSION_DB_PATH", "data/sessions.db")
+_DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 _SESSION_SECRET = os.getenv("SESSION_SECRET", "").strip()
 _SESSION_COOKIE_DOMAIN = os.getenv("SESSION_COOKIE_DOMAIN", "").strip() or None
 _SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "").strip().lower() in {"1", "true", "yes", "on"}
+_SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "").strip().lower()
 _OAUTH_STATE_TTL_SECONDS = int(os.getenv("OAUTH_STATE_TTL_SECONDS", "900"))
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _WORKFLOW_TEMPLATE_PATH = _PROJECT_ROOT / "templates" / "github" / "one-click-diagnosis.yml"
-_persistent_sessions = SQLiteSessionStore(_SESSION_DB_PATH, ttl_seconds=_SESSION_TTL_SECONDS)
+_persistent_sessions = create_session_store(
+    db_path=_SESSION_DB_PATH,
+    ttl_seconds=_SESSION_TTL_SECONDS,
+    database_url=_DATABASE_URL,
+)
 
 if not _SESSION_SECRET:
     logger.warning("SESSION_SECRET is not configured. Falling back to ephemeral key for this process.")
@@ -143,6 +149,21 @@ def _cookie_secure_flag() -> bool:
     if os.getenv("SESSION_COOKIE_SECURE", "").strip() == "":
         return _frontend_url().startswith("https://")
     return _SESSION_COOKIE_SECURE
+
+
+def _cookie_samesite_value() -> str:
+    if _SESSION_COOKIE_SAMESITE in {"lax", "strict", "none"}:
+        return _SESSION_COOKIE_SAMESITE
+
+    frontend_host = urlparse(_frontend_url()).hostname or ""
+    api_host = urlparse(_api_base_url()).hostname or ""
+
+    # Cross-site frontend/backend requires SameSite=None so credentials
+    # are included on fetch() requests between different domains.
+    if frontend_host and api_host and frontend_host != api_host:
+        return "none"
+
+    return "lax"
 
 
 def _sign_session_id(session_id: str) -> str:
@@ -210,7 +231,7 @@ def _set_session_cookie(response: RedirectResponse, session_id: str) -> None:
         value=_sign_session_id(session_id),
         httponly=True,
         max_age=_SESSION_TTL_SECONDS,
-        samesite="lax",
+        samesite=_cookie_samesite_value(),
         secure=_cookie_secure_flag(),
         domain=_SESSION_COOKIE_DOMAIN,
     )
@@ -484,7 +505,7 @@ async def get_auth_session(request: Request, response: Response):
             value=_sign_session_id(sid),
             httponly=True,
             max_age=_SESSION_TTL_SECONDS,
-            samesite="lax",
+            samesite=_cookie_samesite_value(),
             secure=_cookie_secure_flag(),
             domain=_SESSION_COOKIE_DOMAIN,
         )

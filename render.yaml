@@ -9,6 +9,14 @@ services:
     envVars:
       - key: HUGGINGFACE_API_TOKEN
         sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: API_BASE_URL
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
       - key: LOG_LEVEL
         value: INFO
       - key: APP_ENV

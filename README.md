@@ -357,13 +357,53 @@ Compose:
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-### Render
+### Render Backend
 
-render.yaml config uses Docker runtime and health path /api/health.
+The backend is configured for Render through [render.yaml](render.yaml).
 
-Required secret in Render:
+What Render should use:
 
-- HUGGINGFACE_API_TOKEN
+- Build/runtime: Docker service using the root [Dockerfile](Dockerfile)
+- Health check: `/api/health`
+- Port: Render provides `PORT`; the container now honors it automatically
+
+Required environment variables on Render:
+
+- `HUGGINGFACE_API_TOKEN`
+- `SESSION_SECRET`
+- `API_BASE_URL`
+- `FRONTEND_URL`
+- `CORS_ORIGINS`
+
+Recommended values:
+
+- `API_BASE_URL`: your public Render backend URL, for example `https://ci-failure-diagnosis-api.onrender.com`
+- `FRONTEND_URL`: your public Vercel frontend URL, for example `https://your-app.vercel.app`
+- `CORS_ORIGINS`: comma-separated list containing your Vercel URL and local dev URLs
+
+### Vercel Frontend
+
+Deploy the frontend from the [web](web) folder.
+
+Suggested Vercel project settings:
+
+- Root Directory: `web`
+- Build Command: `npm run build`
+- Output Directory: `dist`
+- Install Command: `npm install`
+
+Required frontend environment variable:
+
+- `VITE_API_URL`: public Render backend URL, for example `https://ci-failure-diagnosis-api.onrender.com`
+
+The frontend includes a [Vercel rewrite config](web/vercel.json) so React Router routes like `/app` keep working on refresh.
+
+Deployment order:
+
+1. Deploy the backend to Render
+2. Copy the Render URL into Vercel as `VITE_API_URL`
+3. Deploy the frontend to Vercel
+4. Update backend `FRONTEND_URL` and `CORS_ORIGINS` to the Vercel URL
 
 ## Troubleshooting
 
@@ -390,6 +430,18 @@ Required secret in Render:
 - Ensure diagnosis_result.json is created in workflow
 - Confirm run has PR context or branch-to-PR resolution works
 - Check workflow permissions include pull-requests: write
+
+### Render deploy returns 502 or unhealthy status
+
+- Confirm the container is listening on Render's `PORT`
+- Check `HUGGINGFACE_API_TOKEN` is set in Render secrets
+- Verify `API_BASE_URL`, `FRONTEND_URL`, and `CORS_ORIGINS` are aligned
+
+### Vercel refresh on /app returns 404
+
+- Confirm [web/vercel.json](web/vercel.json) is included in the deployment
+- Ensure the project root is set to `web`
+- Verify the build output directory is `dist`
 
 ## Notes
 

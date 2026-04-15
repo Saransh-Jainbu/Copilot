@@ -6,6 +6,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.edge
+    env_file:
+      - ../.env
     volumes:
       - shared-data:/app/data
     environment:
@@ -16,6 +18,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.fog
+    env_file:
+      - ../.env
     volumes:
       - shared-data:/app/data
     environment:
@@ -28,6 +32,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.cloud
+    env_file:
+      - ../.env
     ports:
       - "8000:8000"
     volumes:

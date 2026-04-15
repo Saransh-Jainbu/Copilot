@@ -357,6 +357,8 @@ Compose:
 docker compose -f docker/docker-compose.yml up --build
 ```
 
+Docker Compose reads the root [.env](.env) file through `env_file`, so your local container run gets the same settings without extra exports.
+
 ### Render Backend
 
 The backend is configured for Render through [render.yaml](render.yaml).

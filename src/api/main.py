@@ -409,6 +409,17 @@ app.add_middleware(
 
 # --- Endpoints ---
 
+@app.get("/")
+async def root():
+    """Root endpoint for quick service discovery."""
+    return {
+        "name": "CI Failure Diagnosis API",
+        "status": "ok",
+        "health": "/api/health",
+        "docs": "/docs",
+    }
+
+
 @app.get("/api/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint."""

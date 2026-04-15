@@ -330,15 +330,17 @@ class DebugAgent:
         self.low_confidence_threshold = low_confidence_threshold
         self.max_context_results = max(int(os.getenv("AGENT_MAX_CONTEXT_RESULTS", "3")), 1)
         self.max_context_chars = max(int(os.getenv("AGENT_MAX_CONTEXT_CHARS", "2000")), 500)
+        self.max_code_context_chars = max(int(os.getenv("AGENT_MAX_CODE_CONTEXT_CHARS", "4000")), 500)
         self.max_error_section_chars = max(int(os.getenv("AGENT_MAX_ERROR_SECTION_CHARS", "2000")), 500)
         self.max_diagnosis_tokens = max(int(os.getenv("AGENT_MAX_DIAGNOSIS_TOKENS", "320")), 64)
         self.max_critique_tokens = max(int(os.getenv("AGENT_MAX_CRITIQUE_TOKENS", "96")), 32)
 
-    def debug(self, raw_log: str) -> DebugResult:
+    def debug(self, raw_log: str, code_context: Optional[str] = None) -> DebugResult:
         """Run the full debugging pipeline on a raw CI/CD log.
 
         Args:
             raw_log: The raw CI/CD failure log text.
+            code_context: Optional related repository file snippets.
 
         Returns:
             DebugResult with diagnosis, suggestions, and reasoning trace.
@@ -346,6 +348,10 @@ class DebugAgent:
         total_start = time.time()
         trace: list[AgentStep] = []
         step_num = 0
+        prepared_code_context = self._truncate_text(
+            (code_context or "").strip(),
+            self.max_code_context_chars,
+        )
 
         # --- Step 1: Preprocess ---
         step_num += 1
@@ -401,11 +407,14 @@ class DebugAgent:
             parsed=parsed,
             retrieved_context=context_str,
             error_section=error_section,
+            code_context=prepared_code_context,
         )
 
         llm_response = self.llm.generate(prompt, max_tokens=self.max_diagnosis_tokens)
-        diagnosis_text = llm_response["text"]
+        diagnosis_text = str(llm_response.get("text", "")).strip()
         llm_failed = bool(llm_response.get("error", False))
+        if not diagnosis_text or self._is_serialized_chat_payload(diagnosis_text):
+            llm_failed = True
         if llm_failed:
             diagnosis_text = self._build_fallback_diagnosis(classification, parsed)
         trace.append(AgentStep(
@@ -455,11 +464,13 @@ class DebugAgent:
                 latency_ms=int((time.time() - step_start) * 1000),
             ))
 
+        diagnosis_text = self._sanitize_diagnosis_text(diagnosis_text, classification, parsed)
+
         # --- Parse results ---
         fix_suggestions = self._extract_suggestions(diagnosis_text)
         fix_suggestions = self._filter_suggestions(fix_suggestions, parsed)
         patch = self._extract_patch(diagnosis_text)
-        if patch.startswith("No specific patch generated"):
+        if patch.startswith("No specific patch generated") or self._is_non_actionable_patch(patch):
             patch = self._build_fallback_patch(classification, parsed)
 
         total_ms = int((time.time() - total_start) * 1000)
@@ -473,6 +484,107 @@ class DebugAgent:
             confidence=confidence,
             reasoning_trace=trace,
             total_latency_ms=total_ms,
+        )
+
+    def _is_serialized_chat_payload(self, text: str) -> bool:
+        """Detect when provider metadata was returned instead of diagnosis prose."""
+        stripped = text.strip()
+        if not stripped:
+            return True
+
+        lower = stripped.lower()
+        markers = (
+            "chatcmpl",
+            "'choices':",
+            '"choices":',
+            "'system_fingerprint':",
+            '"system_fingerprint":',
+        )
+        return any(marker in lower for marker in markers)
+
+    def _sanitize_diagnosis_text(
+        self,
+        diagnosis_text: str,
+        classification: ClassificationResult,
+        parsed: Optional[Any],
+    ) -> str:
+        """Normalize LLM output to user-facing diagnosis prose.
+
+        Some models return planning/meta narration (for example, "We need to...")
+        instead of final diagnosis text. Replace those with evidence-based prose.
+        """
+        text = (diagnosis_text or "").strip()
+        if not text:
+            return self._build_evidence_based_diagnosis(classification, parsed)
+
+        lower = text.lower()
+        meta_markers = (
+            "we need to",
+            "let's",
+            "i should",
+            "thus root cause",
+            "the error is",
+        )
+        has_structured_sections = (
+            "## root cause diagnosis" in lower
+            or "## fix suggestions" in lower
+            or "## patch recommendation" in lower
+        )
+
+        # If response looks like internal reasoning without structured answer, replace it.
+        first_line = text.splitlines()[0].strip().lower() if text.splitlines() else ""
+        if any(marker in first_line for marker in meta_markers) and not has_structured_sections:
+            return self._build_evidence_based_diagnosis(classification, parsed)
+
+        return text
+
+    def _build_evidence_based_diagnosis(
+        self,
+        classification: ClassificationResult,
+        parsed: Optional[Any],
+    ) -> str:
+        """Build structured diagnosis prose grounded in parsed evidence."""
+        error_message = "N/A"
+        failing_line = "N/A"
+        likely_cause = "The failure is consistent with the classified category and parsed error evidence."
+
+        if parsed:
+            if parsed.error_message:
+                error_message = parsed.error_message.strip()
+            if parsed.error_lines:
+                failing_line = parsed.error_lines[0].strip()
+
+        if self._is_src_import_path_issue(parsed):
+            likely_cause = (
+                "CI is running tests without installing the project package or setting PYTHONPATH, "
+                "so imports such as `from src...` fail during test discovery."
+            )
+
+        return (
+            "## Root Cause Diagnosis\n"
+            f"- Classified failure type: {classification.category}\n"
+            f"- Primary error message: {error_message}\n"
+            f"- Key failing line: {failing_line}\n\n"
+            f"Likely cause: {likely_cause}\n\n"
+            "## Fix Suggestions\n"
+            "Use the suggestions below, which are filtered against parsed evidence."
+        )
+
+    def _is_src_import_path_issue(self, parsed: Optional[Any]) -> bool:
+        """Detect Python import path issues where `src` is not importable in CI."""
+        if not parsed:
+            return False
+        evidence = " ".join(
+            [
+                parsed.error_message if parsed.error_message else "",
+                " ".join(parsed.error_lines) if parsed.error_lines else "",
+                " ".join(parsed.context_lines) if parsed.context_lines else "",
+            ]
+        ).lower()
+        return (
+            "no module named 'src'" in evidence
+            or 'no module named "src"' in evidence
+            or "importerror while importing test module" in evidence
         )
 
     def _build_retrieval_query(
@@ -565,16 +677,20 @@ class DebugAgent:
         parsed: Optional[Any],
         retrieved_context: str,
         error_section: str,
+        code_context: str = "",
     ) -> str:
         """Build the most appropriate diagnosis prompt for the current failure."""
         prompt_template = self._select_diagnosis_prompt(classification.category, parsed, classification.confidence)
+        context_blocks = [self._truncate_text(retrieved_context, self.max_context_chars)]
+        if code_context:
+            context_blocks.append("## Related Repository Files\n" + code_context)
         params = dict(
             error_type=classification.category,
             confidence=classification.confidence,
             error_message=parsed.error_message if parsed else "N/A",
             error_lines="\n".join(parsed.error_lines[:6]) if parsed else "N/A",
             extracted_evidence=self._format_extracted_evidence(parsed),
-            retrieved_context=self._truncate_text(retrieved_context, self.max_context_chars),
+            retrieved_context="\n\n".join(part for part in context_blocks if part) or "N/A",
             error_section=error_section[: self.max_error_section_chars] if error_section else "N/A",
         )
         # Full diagnosis prompts need extra params; only add them when template uses them.
@@ -765,6 +881,42 @@ class DebugAgent:
             return "\n\n".join(code_blocks)
         return "No specific patch generated. See fix suggestions above."
 
+    def _is_non_actionable_patch(self, patch: str) -> bool:
+        """Detect extracted patch text that is just error output, not a real patch."""
+        if not patch:
+            return True
+
+        normalized = patch.strip()
+        if not normalized:
+            return True
+
+        lower = normalized.lower()
+        # Common CI error-line fragments that occasionally appear inside fenced blocks.
+        error_markers = [
+            "modulenotfounderror",
+            "importerror",
+            "traceback",
+            "process completed with exit code",
+            "error collecting",
+        ]
+        if any(marker in lower for marker in error_markers):
+            # If there is no patch-like structure, treat as non-actionable.
+            patch_markers = [
+                "python -m pip",
+                "pip install",
+                "pytest",
+                "pyproject.toml",
+                "requirements.txt",
+                "package.json",
+                "dockerfile",
+                "name:",
+                "run:",
+            ]
+            if not any(marker in lower for marker in patch_markers):
+                return True
+
+        return False
+
     def _build_fallback_patch(
         self,
         classification: ClassificationResult,
@@ -890,6 +1042,16 @@ class DebugAgent:
         category = getattr(getattr(parsed, "metadata", {}), "get", lambda k, d=None: d)("category", "")
         if parsed and hasattr(parsed, "metadata"):
             category = parsed.metadata.get("category", "")
+
+        if category in ("dependency_error", "python_dependency") and self._is_src_import_path_issue(parsed):
+            targeted = [
+                "Install the project package in CI before tests (for example `python -m pip install -e .`).",
+                "Set `PYTHONPATH` to the repository root when running pytest if editable install is not used.",
+                "Run tests from repository root so imports resolve consistently.",
+                "Ensure `src/__init__.py` and package `__init__.py` files are present and committed.",
+            ]
+            return self._merge_suggestions(targeted, suggestions, max_total=10)
+
         subtype = self._extract_error_subtype(parsed)
         subtype_for_template = subtype if subtype != "N/A" else None
 

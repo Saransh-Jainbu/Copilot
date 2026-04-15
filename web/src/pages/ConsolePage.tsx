@@ -71,6 +71,34 @@ const NAV_ITEMS: Array<{ key: View; label: string }> = [
   { key: 'history', label: 'History' },
 ]
 
+const ANALYSIS_STAGES = [
+  {
+    key: 'parse',
+    title: 'Parsing failure log',
+    detail: 'Extracting actionable lines, stack frames, and probable failure signals.',
+  },
+  {
+    key: 'classify',
+    title: 'Classifying incident',
+    detail: 'Mapping the failure into a known CI/CD category with confidence scoring.',
+  },
+  {
+    key: 'retrieve',
+    title: 'Retrieving knowledge context',
+    detail: 'Collecting relevant docs and historical examples from the retrieval index.',
+  },
+  {
+    key: 'reason',
+    title: 'Generating diagnosis',
+    detail: 'Producing root cause, remediation steps, and patch guidance.',
+  },
+  {
+    key: 'finalize',
+    title: 'Finalizing response',
+    detail: 'Validating consistency and formatting the result for review.',
+  },
+] as const
+
 function getDefaultApiUrl() {
   const envUrl = (import.meta.env.VITE_API_URL || '').trim()
   if (envUrl) {
@@ -126,6 +154,8 @@ function ConsolePage() {
   const [initLoading, setInitLoading] = useState(false)
   const [initStatus, setInitStatus] = useState('')
   const [authError, setAuthError] = useState('')
+  const [analysisStageIndex, setAnalysisStageIndex] = useState(0)
+  const [analysisElapsedMs, setAnalysisElapsedMs] = useState(0)
 
   useEffect(() => {
     localStorage.setItem('copilot-api-url', apiUrl)
@@ -162,6 +192,34 @@ function ConsolePage() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    if (!loading) {
+      return
+    }
+
+    setAnalysisStageIndex(0)
+    setAnalysisElapsedMs(0)
+
+    const startedAt = Date.now()
+    const stageInterval = window.setInterval(() => {
+      setAnalysisStageIndex((current) => {
+        if (current >= ANALYSIS_STAGES.length - 1) {
+          return current
+        }
+        return current + 1
+      })
+    }, 1300)
+
+    const elapsedInterval = window.setInterval(() => {
+      setAnalysisElapsedMs(Date.now() - startedAt)
+    }, 250)
+
+    return () => {
+      window.clearInterval(stageInterval)
+      window.clearInterval(elapsedInterval)
+    }
+  }, [loading])
 
   async function loadHistory() {
     try {
@@ -343,6 +401,7 @@ function ConsolePage() {
       setError(message)
     } finally {
       setLoading(false)
+      setAnalysisElapsedMs(0)
     }
   }
 
@@ -564,7 +623,7 @@ function ConsolePage() {
                   disabled={loading || logText.trim().length < 10}
                   className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-200 disabled:cursor-wait disabled:opacity-60"
                 >
-                  {loading ? 'Running Analysis...' : 'Analyze Failure'}
+                  {loading ? 'Analysis Running...' : 'Analyze Failure'}
                 </button>
 
                 {error ? <p className="text-sm text-red-400">{error}</p> : null}
@@ -575,6 +634,36 @@ function ConsolePage() {
                   <h2 className="text-xl font-semibold">Diagnosis Summary</h2>
                   {result ? <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-zinc-300">{Math.round(result.confidence * 100)}%</span> : null}
                 </div>
+
+                {loading && (
+                  <article className="rounded-2xl border border-cyan-300/25 bg-[linear-gradient(150deg,rgba(8,47,73,0.35),rgba(9,9,11,0.65))] p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h3 className="text-base font-semibold text-cyan-100">Analysis Progress</h3>
+                      <span className="rounded-full border border-cyan-300/30 bg-cyan-300/10 px-2.5 py-1 text-xs text-cyan-100">
+                        {Math.max(1, Math.round(analysisElapsedMs / 1000))}s
+                      </span>
+                    </div>
+                    <ol className="grid gap-2">
+                      {ANALYSIS_STAGES.map((stage, index) => {
+                        const completed = index < analysisStageIndex
+                        const active = index === analysisStageIndex
+                        return (
+                          <li
+                            key={stage.key}
+                            className={`rounded-xl border px-3 py-2 text-sm ${completed
+                              ? 'border-emerald-300/30 bg-emerald-300/10 text-emerald-100'
+                              : active
+                                ? 'border-cyan-300/35 bg-cyan-300/10 text-cyan-100'
+                                : 'border-white/10 bg-white/[0.02] text-zinc-400'}`}
+                          >
+                            <p className="font-semibold">{index + 1}. {stage.title}</p>
+                            <p className="mt-0.5 text-xs text-inherit/90">{stage.detail}</p>
+                          </li>
+                        )
+                      })}
+                    </ol>
+                  </article>
+                )}
 
                 {!result && <p className="text-sm text-zinc-400">Run an analysis to see diagnosis, fix suggestions, and reasoning trace.</p>}
 
@@ -618,28 +707,49 @@ function ConsolePage() {
           )}
 
           {view === 'knowledge' && (
-            <section className="grid gap-4 rounded-3xl border border-white/10 bg-zinc-950/80 p-6">
-              <header className="grid gap-1">
+            <section className="grid gap-4 rounded-3xl border border-cyan-300/20 bg-[linear-gradient(155deg,rgba(2,6,23,0.9),rgba(8,47,73,0.34))] p-6">
+              <header className="grid gap-2">
+                <span className="w-fit rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-1 text-xs uppercase tracking-[0.12em] text-cyan-100">
+                  Retrieval Intelligence
+                </span>
                 <h1 className="text-2xl font-semibold">Knowledge Surface</h1>
-                <p className="text-sm text-zinc-400">Curated docs, official references, and retrieval corpus stats from the backend index.</p>
+                <p className="max-w-3xl text-sm text-zinc-300">
+                  Curated guides, official references, and indexed community signals used by the agent during diagnosis.
+                </p>
               </header>
 
               <div className="grid gap-3 md:grid-cols-3">
-                <article className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                  <span className="text-sm text-zinc-400">Curated Error Guides</span>
-                  <strong className="mt-2 block text-3xl font-semibold">14+</strong>
+                <article className="rounded-2xl border border-cyan-300/20 bg-[linear-gradient(145deg,rgba(34,211,238,0.1),rgba(9,9,11,0.5))] p-4">
+                  <span className="text-sm text-cyan-100">Curated Error Guides</span>
+                  <strong className="mt-2 block text-3xl font-semibold text-white">14+</strong>
+                  <p className="mt-1 text-xs text-zinc-300">Failure playbooks for dependency, infra, auth, and workflow classes.</p>
                 </article>
-                <article className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                  <span className="text-sm text-zinc-400">Official Docs</span>
-                  <strong className="mt-2 block text-3xl font-semibold">50+</strong>
+                <article className="rounded-2xl border border-cyan-300/20 bg-[linear-gradient(145deg,rgba(59,130,246,0.12),rgba(9,9,11,0.5))] p-4">
+                  <span className="text-sm text-cyan-100">Official Docs</span>
+                  <strong className="mt-2 block text-3xl font-semibold text-white">50+</strong>
+                  <p className="mt-1 text-xs text-zinc-300">Vendor documentation snapshots mapped by failure signatures.</p>
                 </article>
-                <article className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                  <span className="text-sm text-zinc-400">StackOverflow Samples</span>
-                  <strong className="mt-2 block text-3xl font-semibold">Indexed</strong>
+                <article className="rounded-2xl border border-cyan-300/20 bg-[linear-gradient(145deg,rgba(20,184,166,0.12),rgba(9,9,11,0.5))] p-4">
+                  <span className="text-sm text-cyan-100">StackOverflow Samples</span>
+                  <strong className="mt-2 block text-3xl font-semibold text-white">Indexed</strong>
+                  <p className="mt-1 text-xs text-zinc-300">Community fixes and patterns extracted for retrieval augmentation.</p>
                 </article>
               </div>
 
-              <p className="text-sm text-zinc-500">This section can be expanded with per-source index metadata endpoints.</p>
+              <div className="grid gap-3 rounded-2xl border border-white/10 bg-black/25 p-4 md:grid-cols-3">
+                <article className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                  <p className="text-xs uppercase tracking-[0.1em] text-zinc-500">Coverage</p>
+                  <p className="mt-1 text-sm text-zinc-200">Knowledge sources span cloud, Docker, Kubernetes, GitHub Actions, and Python/Node package ecosystems.</p>
+                </article>
+                <article className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                  <p className="text-xs uppercase tracking-[0.1em] text-zinc-500">Retrieval Quality</p>
+                  <p className="mt-1 text-sm text-zinc-200">Context is prioritized by failure category and matched error signatures before reasoning begins.</p>
+                </article>
+                <article className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                  <p className="text-xs uppercase tracking-[0.1em] text-zinc-500">Pipeline Readiness</p>
+                  <p className="mt-1 text-sm text-zinc-200">Index is ready for diagnosis requests and optimized for low-latency retrieval.</p>
+                </article>
+              </div>
             </section>
           )}
 
@@ -672,10 +782,17 @@ function ConsolePage() {
             </section>
           )}
 
-          <footer className="mt-5 flex flex-wrap gap-2 rounded-xl border border-white/10 bg-zinc-950/75 p-3 text-xs text-zinc-400">
-            {['FastAPI', 'FAISS', 'HuggingFace', 'React + Vite', 'Tailwind CSS'].map((pill) => (
-              <span key={pill} className="rounded-full border border-white/10 bg-white/5 px-3 py-1">{pill}</span>
-            ))}
+          <footer className="mt-5 grid gap-4 rounded-2xl border border-white/10 bg-zinc-950/85 p-4 text-xs text-zinc-400 md:grid-cols-[1fr_auto] md:items-center">
+            <div className="grid gap-2">
+              <p className="text-sm font-semibold text-zinc-200">CI Diagnosis Console</p>
+              <p className="text-zinc-400">Operational dashboard for CI failure analysis, repository setup, and remediation flow.</p>
+              <p className="text-zinc-500">© {new Date().getFullYear()} CI Diagnosis Platform</p>
+            </div>
+            <div className="flex flex-wrap gap-2 md:justify-end">
+              {['FastAPI', 'FAISS', 'HuggingFace', 'React + Vite', 'Tailwind CSS'].map((pill) => (
+                <span key={pill} className="rounded-full border border-white/10 bg-white/5 px-3 py-1">{pill}</span>
+              ))}
+            </div>
           </footer>
         </main>
       </div>

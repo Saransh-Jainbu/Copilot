@@ -167,6 +167,23 @@ function LandingPage() {
               Launch Console
             </Link>
           </section>
+
+          <footer className="grid gap-5 rounded-3xl border border-cyan-300/25 bg-[linear-gradient(140deg,rgba(2,6,23,0.96),rgba(8,47,73,0.62))] p-6 md:grid-cols-[1fr_auto] md:items-center md:p-8">
+            <div className="grid gap-2">
+              <p className="text-sm font-semibold uppercase tracking-[0.12em] text-cyan-100">CI Diagnosis Copilot</p>
+              <p className="max-w-2xl text-sm text-slate-300">
+                Automated CI failure triage with contextual diagnosis, fix suggestions, and workflow-native remediation guidance.
+              </p>
+              <p className="text-xs text-slate-400">© {new Date().getFullYear()} CI Diagnosis Platform. Built for delivery teams.</p>
+            </div>
+
+            <div className="flex flex-wrap gap-2 text-xs text-slate-300 md:justify-end">
+              <a className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 hover:bg-cyan-300/20" href="#features">Features</a>
+              <a className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 hover:bg-cyan-300/20" href="#flow">Workflow</a>
+              <a className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 hover:bg-cyan-300/20" href="#deploy">Deploy</a>
+              <Link className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 hover:bg-cyan-300/20" to="/app">Console</Link>
+            </div>
+          </footer>
         </div>
       </div>
     </div>

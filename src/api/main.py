@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 class DebugRequest(BaseModel):
     """Request body for the /api/debug endpoint."""
     log_text: str = Field(..., min_length=10, description="Raw CI/CD failure log text")
+    code_context: Optional[str] = Field(None, description="Optional related repository file snippets")
     enable_rag: bool = Field(True, description="Enable RAG retrieval")
     enable_self_critique: bool = Field(False, description="Enable agent self-critique")
     max_steps: int = Field(5, ge=1, le=10, description="Max reasoning steps")
@@ -420,7 +421,7 @@ async def debug_log(request: DebugRequest):
         )
 
         # Run the debugging pipeline
-        result = agent.debug(request.log_text)
+        result = agent.debug(request.log_text, code_context=request.code_context)
 
         # Evaluate the response
         evaluator = Evaluator()

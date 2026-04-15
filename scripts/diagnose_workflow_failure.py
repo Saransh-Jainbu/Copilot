@@ -29,6 +29,136 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _read_snippet(file_path: Path, max_lines: int = 220, max_chars: int = 2500) -> str:
+    try:
+        raw = file_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception as exc:
+        logger.warning("Could not read %s: %s", file_path, exc)
+        return ""
+
+    lines = raw.splitlines()
+    snippet = "\n".join(lines[:max_lines]).strip()
+    if len(snippet) > max_chars:
+        snippet = snippet[:max_chars].rstrip() + "\n...[truncated]"
+    return snippet
+
+
+def _extract_log_file_candidates(log_text: str) -> list[str]:
+    path_pattern = re.compile(
+        r"([A-Za-z0-9_./-]+\.(?:ya?ml|json|toml|ini|cfg|env|py|ts|tsx|js|jsx|sh|txt|xml))",
+        re.IGNORECASE,
+    )
+    matches = path_pattern.findall(log_text or "")
+    cleaned: list[str] = []
+    for item in matches:
+        candidate = item.strip().strip("'\"`.,:;()[]{}")
+        if candidate and not candidate.startswith("http"):
+            cleaned.append(candidate)
+    if "Dockerfile" in (log_text or ""):
+        cleaned.append("Dockerfile")
+    # Preserve order while deduplicating.
+    return list(dict.fromkeys(cleaned))
+
+
+def collect_related_code_context(log_text: str, repo_root: Path = Path("."), max_files: int = 10, max_chars: int = 9000) -> str:
+    """Collect likely related repository files to improve diagnosis specificity."""
+    candidates: list[Path] = []
+    log_lower = (log_text or "").lower()
+
+    explicit_candidates = _extract_log_file_candidates(log_text)
+    for rel in explicit_candidates:
+        candidate_path = (repo_root / rel).resolve()
+        try:
+            candidate_path.relative_to(repo_root.resolve())
+        except Exception:
+            continue
+        if candidate_path.exists() and candidate_path.is_file():
+            candidates.append(candidate_path)
+
+    baseline_files = [
+        "Dockerfile",
+        "docker-compose.yml",
+        "requirements.txt",
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        "package.json",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        ".github/workflows/ci.yml",
+        ".github/workflows/ci-failure-diagnosis.yml",
+    ]
+    for rel in baseline_files:
+        path = (repo_root / rel)
+        if path.exists() and path.is_file():
+            candidates.append(path.resolve())
+
+    if "docker" in log_lower:
+        for rel in ["Dockerfile", "docker/Dockerfile.cloud", "docker/Dockerfile.edge", "docker/Dockerfile.fog", "docker/docker-compose.yml"]:
+            path = repo_root / rel
+            if path.exists() and path.is_file():
+                candidates.append(path.resolve())
+
+    if any(token in log_lower for token in ["npm", "node", "yarn", "pnpm", "eresolve"]):
+        for rel in ["package.json", "package-lock.json", "web/package.json", "web/package-lock.json"]:
+            path = repo_root / rel
+            if path.exists() and path.is_file():
+                candidates.append(path.resolve())
+
+    if any(token in log_lower for token in ["python", "pip", "module", "importerror", "modulenotfounderror", "pytest"]):
+        for rel in ["requirements.txt", "pyproject.toml", "setup.py", "setup.cfg", "Makefile"]:
+            path = repo_root / rel
+            if path.exists() and path.is_file():
+                candidates.append(path.resolve())
+
+    if any(token in log_lower for token in ["workflow", "actions", "github"]):
+        workflows_dir = repo_root / ".github" / "workflows"
+        if workflows_dir.exists() and workflows_dir.is_dir():
+            for wf in sorted(workflows_dir.glob("*.yml")):
+                candidates.append(wf.resolve())
+            for wf in sorted(workflows_dir.glob("*.yaml")):
+                candidates.append(wf.resolve())
+
+    deduped: list[Path] = []
+    seen = set()
+    for candidate in candidates:
+        key = str(candidate).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+
+    blocks: list[str] = []
+    consumed = 0
+    root_resolved = repo_root.resolve()
+    for file_path in deduped:
+        if len(blocks) >= max_files or consumed >= max_chars:
+            break
+        snippet = _read_snippet(file_path)
+        if not snippet:
+            continue
+        try:
+            display = file_path.resolve().relative_to(root_resolved)
+        except Exception:
+            display = file_path.name
+        block = f"--- FILE: {display} ---\n{snippet}"
+        if consumed + len(block) > max_chars:
+            remaining = max_chars - consumed
+            if remaining < 200:
+                break
+            block = block[:remaining].rstrip() + "\n...[truncated]"
+        blocks.append(block)
+        consumed += len(block)
+
+    if not blocks:
+        return ""
+
+    context = "\n\n".join(blocks)
+    logger.info("Collected %s related files (%s chars) for context", len(blocks), len(context))
+    return context
+
+
 def build_diagnosis_log(log_text: str, max_chars: int = 10000) -> str:
     """Prepare a high-signal log snippet for diagnosis.
 
@@ -127,7 +257,7 @@ def collect_local_logs(search_dir: Path = Path(".")) -> str:
     return combined
 
 
-def diagnose_failure(api_url: str, log_text: str) -> dict:
+def diagnose_failure(api_url: str, log_text: str, code_context: str = "") -> dict:
     """Call the diagnosis API to analyze the failure."""
     if not log_text:
         logger.error("No log text provided for diagnosis")
@@ -137,6 +267,7 @@ def diagnose_failure(api_url: str, log_text: str) -> dict:
 
     payload = {
         "log_text": prepared_log,
+        "code_context": code_context,
         "enable_rag": True,
         "enable_self_critique": False,
         "max_steps": 3,
@@ -195,7 +326,8 @@ def main():
         
         # Diagnose
         logger.info("Calling diagnosis API for analysis...")
-        diagnosis = diagnose_failure(args.api_url, logs)
+        code_context = collect_related_code_context(logs, Path("."))
+        diagnosis = diagnose_failure(args.api_url, logs, code_context=code_context)
         
         if not diagnosis:
             logger.warning("Diagnosis failed, no result returned")

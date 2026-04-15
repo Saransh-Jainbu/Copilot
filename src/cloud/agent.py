@@ -470,7 +470,7 @@ class DebugAgent:
         fix_suggestions = self._extract_suggestions(diagnosis_text)
         fix_suggestions = self._filter_suggestions(fix_suggestions, parsed)
         patch = self._extract_patch(diagnosis_text)
-        if patch.startswith("No specific patch generated"):
+        if patch.startswith("No specific patch generated") or self._is_non_actionable_patch(patch):
             patch = self._build_fallback_patch(classification, parsed)
 
         total_ms = int((time.time() - total_start) * 1000)
@@ -880,6 +880,42 @@ class DebugAgent:
         if code_blocks:
             return "\n\n".join(code_blocks)
         return "No specific patch generated. See fix suggestions above."
+
+    def _is_non_actionable_patch(self, patch: str) -> bool:
+        """Detect extracted patch text that is just error output, not a real patch."""
+        if not patch:
+            return True
+
+        normalized = patch.strip()
+        if not normalized:
+            return True
+
+        lower = normalized.lower()
+        # Common CI error-line fragments that occasionally appear inside fenced blocks.
+        error_markers = [
+            "modulenotfounderror",
+            "importerror",
+            "traceback",
+            "process completed with exit code",
+            "error collecting",
+        ]
+        if any(marker in lower for marker in error_markers):
+            # If there is no patch-like structure, treat as non-actionable.
+            patch_markers = [
+                "python -m pip",
+                "pip install",
+                "pytest",
+                "pyproject.toml",
+                "requirements.txt",
+                "package.json",
+                "dockerfile",
+                "name:",
+                "run:",
+            ]
+            if not any(marker in lower for marker in patch_markers):
+                return True
+
+        return False
 
     def _build_fallback_patch(
         self,

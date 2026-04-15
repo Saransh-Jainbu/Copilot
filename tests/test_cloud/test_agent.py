@@ -238,6 +238,48 @@ class TestDebugAgent:
         result = agent.debug("ImportError while importing test module")
         assert any("install -e ." in item.lower() for item in result.fix_suggestions)
 
+    def test_debug_replaces_error_line_patch_with_fallback(self, mock_retriever, mock_preprocessor):
+        llm = MagicMock()
+        llm.generate.return_value = {
+            "text": (
+                "## Root Cause Diagnosis\n"
+                "Import path issue\n"
+                "## Fix Suggestions\n"
+                "1. Install project\n"
+                "## Patch Recommendation\n"
+                "```\n"
+                "E   ModuleNotFoundError: No module named 'src'\n"
+                "```"
+            ),
+            "model": "openai/gpt-oss-120b:fastest",
+            "latency_ms": 100,
+            "tokens_used": 20,
+            "error": False,
+        }
+
+        classifier = MagicMock()
+        classifier.classify.return_value = ClassificationResult(
+            category="dependency_error",
+            confidence=0.95,
+            reasoning="",
+            parsed_log=ParsedLog(
+                error_type="dependency_error",
+                error_message="ModuleNotFoundError: No module named 'src'",
+                error_lines=["ModuleNotFoundError: No module named 'src'"],
+                exit_code=1,
+            ),
+        )
+
+        agent = DebugAgent(
+            llm_client=llm,
+            classifier=classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+
+        result = agent.debug("ImportError while importing test module")
+        assert "python -m pip install -e ." in result.patch_recommendation
+
 
 # ---- Helper Method Tests ----
 

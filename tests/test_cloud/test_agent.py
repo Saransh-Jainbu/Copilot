@@ -184,6 +184,60 @@ class TestDebugAgent:
         assert "chatcmpl" not in result.diagnosis
         assert "Model inference was unavailable" in result.diagnosis
 
+    def test_debug_sanitizes_meta_style_diagnosis_text(self, mock_classifier, mock_retriever, mock_preprocessor):
+        meta_llm = MagicMock()
+        meta_llm.generate.return_value = {
+            "text": "We need to diagnose this CI failure and propose fixes.",
+            "model": "openai/gpt-oss-120b:fastest",
+            "latency_ms": 120,
+            "tokens_used": 32,
+            "error": False,
+        }
+
+        agent = DebugAgent(
+            llm_client=meta_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+
+        result = agent.debug("ModuleNotFoundError: No module named 'src'")
+        assert result.diagnosis.startswith("## Root Cause Diagnosis")
+        assert "We need to diagnose" not in result.diagnosis
+
+    def test_debug_adds_src_import_targeted_suggestions(self, mock_classifier, mock_retriever, mock_preprocessor):
+        meta_llm = MagicMock()
+        meta_llm.generate.return_value = {
+            "text": "## Root Cause Diagnosis\nImport path issue\n## Fix Suggestions\n1. generic suggestion",
+            "model": "openai/gpt-oss-120b:fastest",
+            "latency_ms": 100,
+            "tokens_used": 20,
+            "error": False,
+        }
+
+        classifier = MagicMock()
+        classifier.classify.return_value = ClassificationResult(
+            category="dependency_error",
+            confidence=0.95,
+            reasoning="",
+            parsed_log=ParsedLog(
+                error_type="dependency_error",
+                error_message="ModuleNotFoundError: No module named 'src'",
+                error_lines=["ModuleNotFoundError: No module named 'src'"],
+                exit_code=1,
+            ),
+        )
+
+        agent = DebugAgent(
+            llm_client=meta_llm,
+            classifier=classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+
+        result = agent.debug("ImportError while importing test module")
+        assert any("install -e ." in item.lower() for item in result.fix_suggestions)
+
 
 # ---- Helper Method Tests ----
 

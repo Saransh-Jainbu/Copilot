@@ -464,6 +464,8 @@ class DebugAgent:
                 latency_ms=int((time.time() - step_start) * 1000),
             ))
 
+        diagnosis_text = self._sanitize_diagnosis_text(diagnosis_text, classification, parsed)
+
         # --- Parse results ---
         fix_suggestions = self._extract_suggestions(diagnosis_text)
         fix_suggestions = self._filter_suggestions(fix_suggestions, parsed)
@@ -499,6 +501,91 @@ class DebugAgent:
             '"system_fingerprint":',
         )
         return any(marker in lower for marker in markers)
+
+    def _sanitize_diagnosis_text(
+        self,
+        diagnosis_text: str,
+        classification: ClassificationResult,
+        parsed: Optional[Any],
+    ) -> str:
+        """Normalize LLM output to user-facing diagnosis prose.
+
+        Some models return planning/meta narration (for example, "We need to...")
+        instead of final diagnosis text. Replace those with evidence-based prose.
+        """
+        text = (diagnosis_text or "").strip()
+        if not text:
+            return self._build_evidence_based_diagnosis(classification, parsed)
+
+        lower = text.lower()
+        meta_markers = (
+            "we need to",
+            "let's",
+            "i should",
+            "thus root cause",
+            "the error is",
+        )
+        has_structured_sections = (
+            "## root cause diagnosis" in lower
+            or "## fix suggestions" in lower
+            or "## patch recommendation" in lower
+        )
+
+        # If response looks like internal reasoning without structured answer, replace it.
+        first_line = text.splitlines()[0].strip().lower() if text.splitlines() else ""
+        if any(marker in first_line for marker in meta_markers) and not has_structured_sections:
+            return self._build_evidence_based_diagnosis(classification, parsed)
+
+        return text
+
+    def _build_evidence_based_diagnosis(
+        self,
+        classification: ClassificationResult,
+        parsed: Optional[Any],
+    ) -> str:
+        """Build structured diagnosis prose grounded in parsed evidence."""
+        error_message = "N/A"
+        failing_line = "N/A"
+        likely_cause = "The failure is consistent with the classified category and parsed error evidence."
+
+        if parsed:
+            if parsed.error_message:
+                error_message = parsed.error_message.strip()
+            if parsed.error_lines:
+                failing_line = parsed.error_lines[0].strip()
+
+        if self._is_src_import_path_issue(parsed):
+            likely_cause = (
+                "CI is running tests without installing the project package or setting PYTHONPATH, "
+                "so imports such as `from src...` fail during test discovery."
+            )
+
+        return (
+            "## Root Cause Diagnosis\n"
+            f"- Classified failure type: {classification.category}\n"
+            f"- Primary error message: {error_message}\n"
+            f"- Key failing line: {failing_line}\n\n"
+            f"Likely cause: {likely_cause}\n\n"
+            "## Fix Suggestions\n"
+            "Use the suggestions below, which are filtered against parsed evidence."
+        )
+
+    def _is_src_import_path_issue(self, parsed: Optional[Any]) -> bool:
+        """Detect Python import path issues where `src` is not importable in CI."""
+        if not parsed:
+            return False
+        evidence = " ".join(
+            [
+                parsed.error_message if parsed.error_message else "",
+                " ".join(parsed.error_lines) if parsed.error_lines else "",
+                " ".join(parsed.context_lines) if parsed.context_lines else "",
+            ]
+        ).lower()
+        return (
+            "no module named 'src'" in evidence
+            or 'no module named "src"' in evidence
+            or "importerror while importing test module" in evidence
+        )
 
     def _build_retrieval_query(
         self,
@@ -919,6 +1006,16 @@ class DebugAgent:
         category = getattr(getattr(parsed, "metadata", {}), "get", lambda k, d=None: d)("category", "")
         if parsed and hasattr(parsed, "metadata"):
             category = parsed.metadata.get("category", "")
+
+        if category in ("dependency_error", "python_dependency") and self._is_src_import_path_issue(parsed):
+            targeted = [
+                "Install the project package in CI before tests (for example `python -m pip install -e .`).",
+                "Set `PYTHONPATH` to the repository root when running pytest if editable install is not used.",
+                "Run tests from repository root so imports resolve consistently.",
+                "Ensure `src/__init__.py` and package `__init__.py` files are present and committed.",
+            ]
+            return self._merge_suggestions(targeted, suggestions, max_total=10)
+
         subtype = self._extract_error_subtype(parsed)
         subtype_for_template = subtype if subtype != "N/A" else None
 

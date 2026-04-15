@@ -330,15 +330,17 @@ class DebugAgent:
         self.low_confidence_threshold = low_confidence_threshold
         self.max_context_results = max(int(os.getenv("AGENT_MAX_CONTEXT_RESULTS", "3")), 1)
         self.max_context_chars = max(int(os.getenv("AGENT_MAX_CONTEXT_CHARS", "2000")), 500)
+        self.max_code_context_chars = max(int(os.getenv("AGENT_MAX_CODE_CONTEXT_CHARS", "4000")), 500)
         self.max_error_section_chars = max(int(os.getenv("AGENT_MAX_ERROR_SECTION_CHARS", "2000")), 500)
         self.max_diagnosis_tokens = max(int(os.getenv("AGENT_MAX_DIAGNOSIS_TOKENS", "320")), 64)
         self.max_critique_tokens = max(int(os.getenv("AGENT_MAX_CRITIQUE_TOKENS", "96")), 32)
 
-    def debug(self, raw_log: str) -> DebugResult:
+    def debug(self, raw_log: str, code_context: Optional[str] = None) -> DebugResult:
         """Run the full debugging pipeline on a raw CI/CD log.
 
         Args:
             raw_log: The raw CI/CD failure log text.
+            code_context: Optional related repository file snippets.
 
         Returns:
             DebugResult with diagnosis, suggestions, and reasoning trace.
@@ -346,6 +348,10 @@ class DebugAgent:
         total_start = time.time()
         trace: list[AgentStep] = []
         step_num = 0
+        prepared_code_context = self._truncate_text(
+            (code_context or "").strip(),
+            self.max_code_context_chars,
+        )
 
         # --- Step 1: Preprocess ---
         step_num += 1
@@ -401,11 +407,14 @@ class DebugAgent:
             parsed=parsed,
             retrieved_context=context_str,
             error_section=error_section,
+            code_context=prepared_code_context,
         )
 
         llm_response = self.llm.generate(prompt, max_tokens=self.max_diagnosis_tokens)
-        diagnosis_text = llm_response["text"]
+        diagnosis_text = str(llm_response.get("text", "")).strip()
         llm_failed = bool(llm_response.get("error", False))
+        if not diagnosis_text or self._is_serialized_chat_payload(diagnosis_text):
+            llm_failed = True
         if llm_failed:
             diagnosis_text = self._build_fallback_diagnosis(classification, parsed)
         trace.append(AgentStep(
@@ -474,6 +483,22 @@ class DebugAgent:
             reasoning_trace=trace,
             total_latency_ms=total_ms,
         )
+
+    def _is_serialized_chat_payload(self, text: str) -> bool:
+        """Detect when provider metadata was returned instead of diagnosis prose."""
+        stripped = text.strip()
+        if not stripped:
+            return True
+
+        lower = stripped.lower()
+        markers = (
+            "chatcmpl",
+            "'choices':",
+            '"choices":',
+            "'system_fingerprint':",
+            '"system_fingerprint":',
+        )
+        return any(marker in lower for marker in markers)
 
     def _build_retrieval_query(
         self,
@@ -565,16 +590,20 @@ class DebugAgent:
         parsed: Optional[Any],
         retrieved_context: str,
         error_section: str,
+        code_context: str = "",
     ) -> str:
         """Build the most appropriate diagnosis prompt for the current failure."""
         prompt_template = self._select_diagnosis_prompt(classification.category, parsed, classification.confidence)
+        context_blocks = [self._truncate_text(retrieved_context, self.max_context_chars)]
+        if code_context:
+            context_blocks.append("## Related Repository Files\n" + code_context)
         params = dict(
             error_type=classification.category,
             confidence=classification.confidence,
             error_message=parsed.error_message if parsed else "N/A",
             error_lines="\n".join(parsed.error_lines[:6]) if parsed else "N/A",
             extracted_evidence=self._format_extracted_evidence(parsed),
-            retrieved_context=self._truncate_text(retrieved_context, self.max_context_chars),
+            retrieved_context="\n\n".join(part for part in context_blocks if part) or "N/A",
             error_section=error_section[: self.max_error_section_chars] if error_section else "N/A",
         )
         # Full diagnosis prompts need extra params; only add them when template uses them.

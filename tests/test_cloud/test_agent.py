@@ -163,6 +163,27 @@ class TestDebugAgent:
         assert "numpy" in result.patch_recommendation
         assert "No specific patch generated" not in result.patch_recommendation
 
+    def test_debug_uses_fallback_when_llm_returns_serialized_chat_payload(self, mock_classifier, mock_retriever, mock_preprocessor):
+        malformed_llm = MagicMock()
+        malformed_llm.generate.return_value = {
+            "text": "{'id': 'chatcmpl-123', 'choices': [{'message': {'reasoning': '...'}}]}",
+            "model": "openai/gpt-oss-120b:fastest",
+            "latency_ms": 120,
+            "tokens_used": 50,
+            "error": False,
+        }
+
+        agent = DebugAgent(
+            llm_client=malformed_llm,
+            classifier=mock_classifier,
+            retriever=mock_retriever,
+            preprocessor=mock_preprocessor,
+        )
+
+        result = agent.debug("ModuleNotFoundError: No module named 'numpy'")
+        assert "chatcmpl" not in result.diagnosis
+        assert "Model inference was unavailable" in result.diagnosis
+
 
 # ---- Helper Method Tests ----
 

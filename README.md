@@ -1,32 +1,59 @@
-# CI Failure Diagnosis
+# DevOps Copilot: CI Failure Diagnosis Platform
 
-Reusable CI/CD debugging assistant powered by rule-based parsing, retrieval-augmented generation (RAG), and LLM reasoning.
+An end-to-end platform that diagnoses CI/CD failures using rule-based parsing, retrieval, and LLM reasoning, then posts actionable fixes in pull requests.
 
-The project runs as:
+It includes:
 
-- FastAPI backend in src/api
-- React + Vite frontend in web
-- Edge/Fog/Cloud modular pipeline in src/edge, src/fog, src/cloud
-- LLMOps utilities in src/ops (evaluation, prompt registry, tracking)
+- FastAPI backend for diagnosis, auth, and repo onboarding
+- React + Vite frontend dashboard for analysis and one-click setup
+- Edge/Fog/Cloud modular diagnosis pipeline
+- GitHub Actions reusable workflow for automatic CI failure comments
 
-## What Is Current In This Repo
+## Table Of Contents
 
-- Primary UI is React (web).
-- API endpoints are exposed under /api/* from src/api/main.py.
-- FAISS index artifacts are expected at data/faiss_index/index.faiss and data/faiss_index/metadata.json.
-- Render deploy config is in render.yaml and uses the root Dockerfile.
-- The cloud layer uses Hugging Face Inference API for generated text unless you reconfigure it.
+- Overview
+- Core Features
+- System Architecture
+- Repository Layout
+- Prerequisites
+- Local Development Setup
+- Environment Variables
+- Run Commands
+- API Endpoints
+- GitHub Actions Integration
+- Code-Aware Diagnosis Flow
+- Scripts And Data
+- Testing And Quality
+- Docker And Deployment
+- Troubleshooting
 
-## Architecture
+## Overview
 
-Pipeline flow:
+This project is designed to answer one question quickly and reliably:
 
-1. Edge: preprocess + parse + classify failure logs
-2. Fog: embed query + retrieve relevant docs from FAISS
-3. Cloud: prompt an LLM endpoint, reason, optionally self-critique, produce diagnosis and fixes
-4. Ops: evaluate quality and track run metadata/history
+Why did CI fail, and what should I change in code or config to fix it?
 
-Core modules:
+The platform supports both manual analysis and automated GitHub workflow diagnosis.
+
+## Core Features
+
+- Multi-step diagnosis pipeline with classification, retrieval, reasoning, and optional self-critique
+- Code-aware diagnosis that can include relevant repository files in the reasoning context
+- One-click GitHub onboarding flow from the dashboard
+- Reusable workflow for cross-repo CI diagnosis
+- PR comment generation with issue type, root cause, fix steps, and patch guidance
+- Session-based OAuth onboarding with Google and GitHub
+
+## System Architecture
+
+Diagnosis flow:
+
+1. Edge layer preprocesses and classifies failure logs
+2. Fog layer retrieves related documentation and known failures from FAISS index
+3. Cloud layer prompts an LLM to produce diagnosis and fix suggestions
+4. Ops layer evaluates output quality and tracks metrics
+
+Main modules:
 
 - src/edge/log_parser.py
 - src/edge/classifier.py
@@ -38,130 +65,45 @@ Core modules:
 - src/ops/evaluator.py
 - src/api/main.py
 
-Cloud model behavior:
+## Repository Layout
 
-- The repository does not bundle a local LLM server.
-- Text generation currently goes through Hugging Face Inference API in src/cloud/llm_client.py.
-- Primary and fallback model IDs can be overridden with HF_PRIMARY_MODEL and HF_FALLBACK_MODEL.
-- If inference fails, the cloud agent falls back to rule-based diagnosis text and remediation templates.
-
-## Project Structure
-
-Top-level layout (current):
+High-level structure:
 
 ```text
-Project/
-  configs/
-    config.yaml
-  data/
-    docs/
-    faiss_index/
-    processed/
-    raw_logs/
-  docker/
-    docker-compose.yml
-    Dockerfile.cloud
-    Dockerfile.edge
-    Dockerfile.fog
-  scripts/
-    benchmark.py
-    benchmark_mteb.py
-    build_index.py
-    collect_logs.py
-    eval_diagnosis.py
-    evaluate.py
-    fetch_knowledge.py
-    fetch_stackoverflow.py
+Copilot/
   src/
     api/
     cloud/
     edge/
     fog/
     ops/
+  scripts/
   tests/
-    test_api/
-    test_cloud/
-    test_edge/
-    test_fog/
-    test_ops/
-  web/                         # React + TypeScript frontend (current UI)
-  Dockerfile
-  Makefile
-  README.md
-  render.yaml
+  templates/github/
+  data/
+    docs/
+    faiss_index/
+    processed/
+    raw_logs/
+  web/
+  docker/
+  .github/workflows/
   requirements.txt
+  Makefile
+  Dockerfile
+  render.yaml
 ```
-
-## Reuse In Another Repo
-
-1. Copy the workflow files under `.github/workflows/` into the target repository.
-2. Update `HUGGINGFACE_API_TOKEN`, `HF_PRIMARY_MODEL`, and `HF_FALLBACK_MODEL` in the target repo's secrets or `.env` file.
-3. Rename the workflow, Docker image tag, and Render service name to match the new project.
-4. Update the prompt metadata and any docs or experiment names that should reflect the new repository.
-
-## One-Click GitHub Setup
-
-This repository now provides a reusable workflow that can be called from any project:
-
-- Reusable workflow: `.github/workflows/reusable-diagnose.yml`
-- Consumer template: `templates/github/one-click-diagnosis.yml`
-
-Quick install flow for another repository:
-
-1. Add one workflow file in the target repository using `templates/github/one-click-diagnosis.yml` as the source.
-2. Replace `<OWNER>/<REPO>` with the repository that hosts this toolkit.
-3. Ensure the target CI uploads an artifact named `test-results` (or change `artifacts-name`).
-4. Add `HUGGINGFACE_API_TOKEN` in target repository secrets.
-
-After that, every failed CI run can trigger diagnosis automatically and post a PR comment.
-
-## Centralized Onboarding Site (Vercel)
-
-If you want a centralized "Install" page:
-
-1. Create a small web page (for example in Vercel) with fields for owner/repo/ref.
-2. Generate the final YAML from `templates/github/one-click-diagnosis.yml` by replacing placeholders.
-3. Provide a copy button and a deep link to create a file in GitHub:
-
-`https://github.com/<target-owner>/<target-repo>/new/main/.github/workflows/ci-failure-diagnosis.yml`
-
-This gives a near one-click install experience without requiring users to understand workflow internals.
-
-## Production Auth And Security
-
-For production deployment of the onboarding dashboard, configure these values in `.env`:
-
-- `SESSION_SECRET`: long random secret used to sign session cookies
-- `SESSION_DB_PATH`: SQLite path for persistent session storage
-- `SESSION_COOKIE_SECURE=true` when running over HTTPS
-- `SESSION_COOKIE_DOMAIN`: optional shared domain for subdomain deployments
-- `OAUTH_STATE_TTL_SECONDS`: OAuth state lifetime (default 900)
-- `CORS_ORIGINS`: explicit frontend origins allowed for credentialed requests
-
-OAuth endpoints used by the dashboard:
-
-- `GET /api/auth/google/login`
-- `GET /api/auth/github/login`
-- `GET /api/auth/session`
-- `GET /api/github/repos`
-- `POST /api/github/initialize` (CSRF token required)
-
-Optional GitHub App installation entrypoint:
-
-- `GET /api/auth/github/app/install`
-
-This endpoint is enabled when `GITHUB_APP_NAME` is configured and can be linked from a centralized onboarding page.
 
 ## Prerequisites
 
 - Python 3.11+
 - Node.js 20+
-- Hugging Face token for cloud inference
-- Internet access for Hugging Face inference calls
+- A Hugging Face token for inference
+- Internet access for LLM provider calls
 
-## Environment Setup
+## Local Development Setup
 
-1. Create and activate Python environment.
+### 1. Create and activate venv
 
 Windows PowerShell:
 
@@ -177,90 +119,112 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 
-2. Install Python dependencies.
+### 2. Install backend dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Create .env from template and set token.
+### 3. Install frontend dependencies
+
+```bash
+cd web
+npm install
+cd ..
+```
+
+### 4. Configure environment
+
+Create .env from template:
 
 ```bash
 cp .env.example .env
 ```
 
-Required in .env:
+Fill required values at minimum:
 
 ```env
-HUGGINGFACE_API_TOKEN=hf_xxx
+HUGGINGFACE_API_TOKEN=hf_your_token
 HF_PRIMARY_MODEL=openai/gpt-oss-120b:fastest
 HF_FALLBACK_MODEL=deepseek-ai/DeepSeek-R1:fastest
-LOG_LEVEL=INFO
-APP_ENV=development
+
+API_BASE_URL=http://localhost:8086
+FRONTEND_URL=http://localhost:5173
+
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=http://localhost:8086/api/auth/google/callback
+
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+GITHUB_REDIRECT_URI=http://localhost:8086/api/auth/github/callback
 ```
 
-Optional:
+Important: keep hostnames consistent across frontend URL, backend URL, and OAuth callback configuration. Mixing localhost and 127.0.0.1 can break login sessions.
 
-```env
-GITHUB_TOKEN=ghp_xxx
-MLFLOW_TRACKING_URI=mlruns
-PORT=8000
-```
+## Environment Variables
 
-## Run Locally (Recommended)
+Frequently used variables:
 
-Run backend and frontend in separate terminals.
+- HUGGINGFACE_API_TOKEN: provider token for LLM inference
+- HF_PRIMARY_MODEL, HF_FALLBACK_MODEL: model routing
+- API_BASE_URL, FRONTEND_URL: OAuth and redirect base URLs
+- CORS_ORIGINS: allowed frontend origins
+- SESSION_SECRET and session cookie variables for production hardening
+- GITHUB_TOOLKIT_REPO, GITHUB_TOOLKIT_REF: reusable workflow source
 
-Terminal 1: API
+Latency and context tuning:
+
+- HF_MAX_TOKENS
+- HF_TIMEOUT_SECONDS
+- AGENT_MAX_CONTEXT_RESULTS
+- AGENT_MAX_CONTEXT_CHARS
+- AGENT_MAX_ERROR_SECTION_CHARS
+- AGENT_MAX_DIAGNOSIS_TOKENS
+- AGENT_MAX_CRITIQUE_TOKENS
+- AGENT_MAX_CODE_CONTEXT_CHARS
+
+## Run Commands
+
+Recommended local ports:
+
+- Backend: localhost:8086
+- Frontend: localhost:5173
+
+Run backend:
 
 ```bash
-python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8086
+uvicorn src.api.main:app --host localhost --port 8086 --reload
 ```
 
-Terminal 2: Web UI
+Run frontend:
 
 ```bash
 cd web
-npm install
-npm run dev -- --host 127.0.0.1 --port 5173
+npm run dev
 ```
 
-Then open http://127.0.0.1:5173.
-
-Notes:
-
-- The React app auto-detects a healthy backend on startup (tries localStorage, env override, and common localhost ports).
-- You can still change backend URL from the Analyze view input field.
-- To pin backend URL at build/dev time, set VITE_API_URL in web/.env.local.
-- API health check: GET http://127.0.0.1:8086/api/health
-- If Hugging Face rejects the configured model IDs, update HF_PRIMARY_MODEL and HF_FALLBACK_MODEL in .env.
-
-Example web/.env.local:
-
-```env
-VITE_API_URL=http://127.0.0.1:8086
-```
-
-## Build Frontend
+Quick health check:
 
 ```bash
-cd web
-npm run build
-npm run preview
+curl http://localhost:8086/api/health
 ```
 
-## API Reference
+## API Endpoints
 
 ### POST /api/debug
 
-Request body:
+Analyzes failure logs through the full diagnosis pipeline.
+
+Request example:
 
 ```json
 {
   "log_text": "npm ERR! ERESOLVE unable to resolve dependency tree...",
+  "code_context": "--- FILE: package.json ---\n{...}",
   "enable_rag": true,
-  "enable_self_critique": true,
-  "max_steps": 5
+  "enable_self_critique": false,
+  "max_steps": 3
 }
 ```
 
@@ -275,66 +239,85 @@ Response fields:
 - evaluation
 - total_latency_ms
 
-### GET /api/health
+### Other API endpoints
 
-Returns status, version, uptime.
+- GET /api/health
+- GET /api/history
+- GET /api/metrics
+- GET /api/auth/session
+- GET /api/auth/google/login
+- GET /api/auth/github/login
+- GET /api/github/repos
+- POST /api/github/initialize
 
-### GET /api/history
+## GitHub Actions Integration
 
-Returns recent in-memory debug runs (latest first, capped in process).
+Toolkit files:
 
-### GET /api/metrics
+- Reusable workflow: .github/workflows/reusable-diagnose.yml
+- Consumer template: templates/github/one-click-diagnosis.yml
 
-Returns MLflow summary when available.
+How to onboard another repository:
 
-### Cloud LLM behavior
+1. Add a workflow in target repo using templates/github/one-click-diagnosis.yml
+2. Replace placeholder owner/repo with toolkit repository
+3. Ensure CI uploads artifact named test-results (or update inputs)
+4. Add HUGGINGFACE_API_TOKEN to target repo secrets
+5. Trigger a failing CI run once to validate diagnosis comment flow
 
-The cloud diagnosis layer uses an external LLM provider for generated prose.
-If the provider is unavailable or the model IDs are not supported, the agent returns a deterministic fallback diagnosis and fix suggestions.
+## Code-Aware Diagnosis Flow
 
-## Data And Retrieval
+The diagnosis runner now sends more than just logs.
 
-- Knowledge documents: data/docs
-- Embedding index: data/faiss_index
-- Processed samples: data/processed/sample_logs.json
+In scripts/diagnose_workflow_failure.py, the workflow collects related repository files and sends them as code_context to /api/debug.
 
-Build or rebuild FAISS index:
+Collection behavior includes:
 
-```bash
-python scripts/build_index.py
-```
+- Explicit file paths discovered in logs
+- Baseline config files such as Dockerfile, requirements.txt, package.json, and workflow files
+- Additional files inferred by issue type keywords (docker, python, node, github actions)
+- Size and file-count limits to keep payloads stable
 
-## Scripts
+This improves precision by grounding suggestions in the actual repository code and config.
 
-Useful scripts currently present:
+## Scripts And Data
 
+Useful scripts:
+
+- scripts/diagnose_workflow_failure.py
+- scripts/build_index.py
 - scripts/collect_logs.py
 - scripts/fetch_knowledge.py
 - scripts/fetch_stackoverflow.py
-- scripts/build_index.py
 - scripts/evaluate.py
 - scripts/eval_diagnosis.py
 - scripts/benchmark.py
 - scripts/benchmark_mteb.py
+
+Data locations:
+
+- Knowledge docs: data/docs
+- Vector index: data/faiss_index/index.faiss and metadata.json
+- Processed logs: data/processed
+
+Rebuild retrieval index:
+
+```bash
+python scripts/build_index.py
+```
 
 ## Testing And Quality
 
 Run all tests:
 
 ```bash
-python -m pytest tests -v
+pytest tests -v
 ```
 
-Run key suites:
+Run core agent tests:
 
 ```bash
-python -m pytest tests/test_edge/test_log_parser.py tests/test_edge/test_classifier.py tests/test_cloud/test_agent.py -q
-```
-
-Coverage:
-
-```bash
-python -m pytest tests --cov=src --cov-report=html
+pytest tests/test_cloud/test_agent.py -q
 ```
 
 Lint:
@@ -343,9 +326,18 @@ Lint:
 ruff check src tests
 ```
 
-## Docker
+Useful Make targets:
 
-Root Dockerfile runs FastAPI on container port 8000.
+- make install
+- make run-api
+- make run-web
+- make test
+- make lint
+- make build-index
+
+## Docker And Deployment
+
+### Docker
 
 Build image:
 
@@ -353,50 +345,57 @@ Build image:
 docker build -t ci-failure-diagnosis .
 ```
 
-Run container and map to local 8086:
+Run container:
 
 ```bash
 docker run --rm -p 8086:8000 --env-file .env ci-failure-diagnosis
 ```
 
-Health check:
-
-```bash
-curl http://127.0.0.1:8086/api/health
-```
-
-Compose stack:
+Compose:
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-## Deployment
+### Render
 
-Render configuration:
+render.yaml config uses Docker runtime and health path /api/health.
 
-- File: render.yaml
-- Service type: web
-- Runtime: docker
-- Health path: /api/health
-- Required secret env var: HUGGINGFACE_API_TOKEN
+Required secret in Render:
 
-## Configuration
-
-Main config file: configs/config.yaml
-
-Includes:
-
-- edge parser/classifier options
-- fog embedding and vector store paths
-- cloud LLM/provider and agent settings
-- ops tracking and evaluation settings
-- API host/port defaults
+- HUGGINGFACE_API_TOKEN
 
 ## Troubleshooting
 
-1. API starts on wrong port:
-   Start with explicit host and port:
+### OAuth redirect_uri_mismatch
+
+- Ensure OAuth provider callback exactly matches GOOGLE_REDIRECT_URI or GITHUB_REDIRECT_URI
+- Keep hosts consistent (localhost vs 127.0.0.1)
+
+### Login succeeds but dashboard still shows signed out
+
+- Check FRONTEND_URL and API_BASE_URL consistency
+- Clear browser cookies after host changes
+- Verify CORS_ORIGINS includes active frontend origin
+
+### Diagnosis is generic
+
+- Verify test artifacts actually contain failure logs
+- Confirm FAISS index exists and is loaded
+- Increase context/token limits if needed
+- Use code-aware flow through GitHub Action so code_context is included
+
+### No PR comment posted
+
+- Ensure diagnosis_result.json is created in workflow
+- Confirm run has PR context or branch-to-PR resolution works
+- Check workflow permissions include pull-requests: write
+
+## Notes
+
+- LLM responses are provider-dependent and can vary by model/ref
+- When model output fails, deterministic fallback diagnosis is used to keep workflows stable
+- The Analyze tab in UI is for manual log debugging; dashboard onboarding is for repository rollout
 
    python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8086
 

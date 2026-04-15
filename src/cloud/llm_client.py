@@ -178,6 +178,34 @@ class LLMClient:
             "stream": False,
         }
 
+    def _extract_message_text(self, message: object) -> Optional[str]:
+        """Extract text content from OpenAI-compatible message payload shapes."""
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+            if isinstance(content, list):
+                parts: list[str] = []
+                for part in content:
+                    if isinstance(part, dict):
+                        text_part = part.get("text")
+                        if isinstance(text_part, str) and text_part.strip():
+                            parts.append(text_part.strip())
+                if parts:
+                    return "\n".join(parts)
+
+            # Some providers return only a reasoning field when completion is truncated.
+            reasoning = message.get("reasoning")
+            if isinstance(reasoning, str) and reasoning.strip():
+                return reasoning.strip()
+
+        if hasattr(message, "content"):
+            content = getattr(message, "content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+
+        return None
+
     def _extract_text(self, result: object) -> str:
         """Extract assistant text from a chat completion response."""
         if isinstance(result, dict):
@@ -185,17 +213,15 @@ class LLMClient:
             if choices:
                 choice = choices[0]
                 if isinstance(choice, dict):
-                    message = choice.get("message")
-                    if isinstance(message, dict) and message.get("content"):
-                        return str(message.get("content"))
+                    message_text = self._extract_message_text(choice.get("message"))
+                    if message_text:
+                        return message_text
                     if choice.get("text"):
                         return str(choice.get("text"))
                 if hasattr(choice, "message"):
-                    message = getattr(choice, "message", None)
-                    if isinstance(message, dict) and message.get("content"):
-                        return str(message.get("content"))
-                    if hasattr(message, "content") and getattr(message, "content"):
-                        return str(getattr(message, "content"))
+                    message_text = self._extract_message_text(getattr(choice, "message", None))
+                    if message_text:
+                        return message_text
             if result.get("generated_text"):
                 return str(result.get("generated_text"))
         if isinstance(result, list) and result:

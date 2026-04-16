@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 
@@ -183,6 +183,59 @@ function ConsolePage() {
   const [selectedHistoryId, setSelectedHistoryId] = useState<number | null>(null)
   const [selectedHistoryItem, setSelectedHistoryItem] = useState<DebugHistoryItem | null>(null)
 
+  const loadRepos = useCallback(async () => {
+    setReposLoading(true)
+    try {
+      const res = await fetch(`${apiUrl}/api/github/repos`, { credentials: 'include' })
+      if (!res.ok) {
+        setRepos([])
+        return
+      }
+      const payload = await res.json()
+      const repoList: GithubRepo[] = payload.repos || []
+      setRepos(repoList)
+      if (!selectedRepo && repoList.length) {
+        setSelectedRepo(repoList[0].full_name)
+      }
+    } catch {
+      setRepos([])
+    } finally {
+      setReposLoading(false)
+    }
+  }, [apiUrl, selectedRepo])
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/history`, { credentials: 'include' })
+      if (!res.ok) {
+        return
+      }
+      const payload = await res.json()
+      setHistory(payload.results || [])
+    } catch {
+      setHistory([])
+    }
+  }, [apiUrl])
+
+  const loadAuthSession = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/auth/session`, { credentials: 'include' })
+      if (!res.ok) {
+        setAuthSession(null)
+        return
+      }
+      const payload: AuthSession = await res.json()
+      setAuthSession(payload)
+      if (payload.github_connected) {
+        await loadRepos()
+      }
+    } catch {
+      setAuthSession(null)
+    } finally {
+      setSessionLoaded(true)
+    }
+  }, [apiUrl, loadRepos])
+
   useEffect(() => {
     localStorage.setItem('copilot-api-url', apiUrl)
   }, [apiUrl])
@@ -209,7 +262,7 @@ function ConsolePage() {
   useEffect(() => {
     void loadHistory()
     void loadAuthSession()
-  }, [apiUrl])
+  }, [loadAuthSession, loadHistory])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -223,7 +276,7 @@ function ConsolePage() {
         setAuthError('Authentication did not complete. Please try again.')
       }
     }
-  }, [])
+  }, [loadAuthSession])
 
   useEffect(() => {
     if (!loading) {
@@ -252,59 +305,6 @@ function ConsolePage() {
       window.clearInterval(elapsedInterval)
     }
   }, [loading])
-
-  async function loadHistory() {
-    try {
-      const res = await fetch(`${apiUrl}/api/history`, { credentials: 'include' })
-      if (!res.ok) {
-        return
-      }
-      const payload = await res.json()
-      setHistory(payload.results || [])
-    } catch {
-      setHistory([])
-    }
-  }
-
-  async function loadAuthSession() {
-    try {
-      const res = await fetch(`${apiUrl}/api/auth/session`, { credentials: 'include' })
-      if (!res.ok) {
-        setAuthSession(null)
-        return
-      }
-      const payload: AuthSession = await res.json()
-      setAuthSession(payload)
-      if (payload.github_connected) {
-        await loadRepos()
-      }
-    } catch {
-      setAuthSession(null)
-    } finally {
-      setSessionLoaded(true)
-    }
-  }
-
-  async function loadRepos() {
-    setReposLoading(true)
-    try {
-      const res = await fetch(`${apiUrl}/api/github/repos`, { credentials: 'include' })
-      if (!res.ok) {
-        setRepos([])
-        return
-      }
-      const payload = await res.json()
-      const repoList: GithubRepo[] = payload.repos || []
-      setRepos(repoList)
-      if (!selectedRepo && repoList.length) {
-        setSelectedRepo(repoList[0].full_name)
-      }
-    } catch {
-      setRepos([])
-    } finally {
-      setReposLoading(false)
-    }
-  }
 
   function startGoogleLogin() {
     const next = encodeURIComponent(`${window.location.origin}/app?view=repo&auth=google_done`)
@@ -409,7 +409,6 @@ function ConsolePage() {
     })
 
     for (const candidate of uniqueCandidates) {
-      // eslint-disable-next-line no-await-in-loop
       const ok = await isHealthy(candidate)
       if (ok) {
         setApiUrl(candidate)

@@ -9,6 +9,8 @@ services:
     envVars:
       - key: HUGGINGFACE_API_TOKEN
         sync: false
+      - key: DATABASE_URL
+        sync: false
       - key: SESSION_SECRET
         sync: false
       - key: API_BASE_URL

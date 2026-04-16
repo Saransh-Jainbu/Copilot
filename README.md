@@ -262,8 +262,11 @@ How to onboard another repository:
 1. Add a workflow in target repo using templates/github/one-click-diagnosis.yml
 2. Replace placeholder owner/repo with toolkit repository
 3. Ensure CI uploads artifact named test-results (or update inputs)
-4. Add HUGGINGFACE_API_TOKEN to target repo secrets
-5. Trigger a failing CI run once to validate diagnosis comment flow
+4. Provide HUGGINGFACE_API_TOKEN in each target repo secret, or as an organization secret shared to selected repositories
+5. Keep `secrets: inherit` in the caller workflow so the reusable workflow receives caller secrets
+6. Trigger a failing CI run once to validate diagnosis comment flow
+
+If the token is missing, the reusable workflow now fails at runtime with a clear message instead of failing YAML evaluation at call time.
 
 ## Code-Aware Diagnosis Flow
 
@@ -357,6 +360,8 @@ Compose:
 docker compose -f docker/docker-compose.yml up --build
 ```
 
+Docker Compose reads the root [.env](.env) file through `env_file`, so your local container run gets the same settings without extra exports.
+
 ### Render Backend
 
 The backend is configured for Render through [render.yaml](render.yaml).
@@ -370,16 +375,22 @@ What Render should use:
 Required environment variables on Render:
 
 - `HUGGINGFACE_API_TOKEN`
+- `DATABASE_URL`
 - `SESSION_SECRET`
+- `SESSION_COOKIE_SAMESITE`
 - `API_BASE_URL`
 - `FRONTEND_URL`
 - `CORS_ORIGINS`
+
+Session persistence is Postgres-only in this project. If `DATABASE_URL` is missing, the API fails fast on startup.
 
 Recommended values:
 
 - `API_BASE_URL`: your public Render backend URL, for example `https://ci-failure-diagnosis-api.onrender.com`
 - `FRONTEND_URL`: your public Vercel frontend URL, for example `https://your-app.vercel.app`
 - `CORS_ORIGINS`: comma-separated list containing your Vercel URL and local dev URLs
+- `SESSION_COOKIE_SAMESITE`: `none` when frontend and backend are on different domains
+- `DATABASE_URL`: Postgres connection string (for example Neon with `sslmode=require`)
 
 ### Vercel Frontend
 

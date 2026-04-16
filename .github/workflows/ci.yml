@@ -111,7 +111,12 @@ jobs:
       - name: Start diagnosis API
         env:
           HUGGINGFACE_API_TOKEN: ${{ secrets.HUGGINGFACE_API_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
+          if [ -z "${DATABASE_URL}" ]; then
+            echo "DATABASE_URL secret is missing. Add it in repository secrets for diagnosis workflow."
+            exit 1
+          fi
           python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000 > api.log 2>&1 &
           for i in {1..30}; do
             if curl -s http://127.0.0.1:8000/api/health > /dev/null 2>&1; then

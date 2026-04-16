@@ -3,11 +3,14 @@ Tests for API Layer: Routes
 """
 
 import pytest
+import os
 from fastapi.testclient import TestClient
 
 
 @pytest.fixture
 def client():
+    if not os.getenv("DATABASE_URL"):
+        pytest.skip("DATABASE_URL not set for Postgres-only session storage")
     from src.api.main import app
     return TestClient(app)
 
@@ -15,9 +18,16 @@ def client():
 class TestHealthEndpoint:
     """Test the /api/health endpoint."""
 
+    def test_root_endpoint(self, client):
+        response = client.get("/")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["health"] == "/api/health"
+
     def test_health_check(self, client):
         response = client.get("/api/health")
-        assert response.status_code == 201
+        assert response.status_code == 200
         data = response.json()
         assert data["status"] == "healthy"
         assert "version" in data

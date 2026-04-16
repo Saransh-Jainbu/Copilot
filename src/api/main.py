@@ -4,6 +4,7 @@ Main entry point for the CI failure diagnosis backend API.
 """
 
 import logging
+import json
 import os
 import time
 import uuid
@@ -15,16 +16,18 @@ from base64 import urlsafe_b64encode
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 from dotenv import load_dotenv
 import requests
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
+import psycopg
 
-from src.api.session_store import SQLiteSessionStore
+from src.api.session_store import create_session_store
 
 load_dotenv()
 
@@ -73,6 +76,7 @@ class HistoryItem(BaseModel):
     confidence: float
     diagnosis_preview: str
     total_latency_ms: int
+    full_result: Optional[dict] = None
 
 
 class GithubInitializeRequest(BaseModel):
@@ -87,7 +91,6 @@ class GithubInitializeRequest(BaseModel):
 # --- Application State ---
 
 _start_time = time.time()
-_debug_history: list[dict] = []  # In-memory session history
 _history_counter = 0
 _INDEX_PATH = "data/faiss_index/index.faiss"
 _METADATA_PATH = "data/faiss_index/metadata.json"
@@ -101,14 +104,18 @@ _oauth_state_store: dict[str, dict[str, Any]] = {}
 
 _SESSION_COOKIE_NAME = "ci_diag_session"
 _SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
-_SESSION_DB_PATH = os.getenv("SESSION_DB_PATH", "data/sessions.db")
+_DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 _SESSION_SECRET = os.getenv("SESSION_SECRET", "").strip()
 _SESSION_COOKIE_DOMAIN = os.getenv("SESSION_COOKIE_DOMAIN", "").strip() or None
 _SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "").strip().lower() in {"1", "true", "yes", "on"}
+_SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "").strip().lower()
 _OAUTH_STATE_TTL_SECONDS = int(os.getenv("OAUTH_STATE_TTL_SECONDS", "900"))
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _WORKFLOW_TEMPLATE_PATH = _PROJECT_ROOT / "templates" / "github" / "one-click-diagnosis.yml"
-_persistent_sessions = SQLiteSessionStore(_SESSION_DB_PATH, ttl_seconds=_SESSION_TTL_SECONDS)
+_persistent_sessions = create_session_store(
+    database_url=_DATABASE_URL,
+    ttl_seconds=_SESSION_TTL_SECONDS,
+)
 
 if not _SESSION_SECRET:
     logger.warning("SESSION_SECRET is not configured. Falling back to ephemeral key for this process.")
@@ -116,15 +123,28 @@ if not _SESSION_SECRET:
 
 
 def _allowed_origins() -> list[str]:
-    raw = os.getenv("CORS_ORIGINS", "")
-    if raw.strip():
-        return [part.strip() for part in raw.split(",") if part.strip()]
-    return [
+    configured = [
+        part.strip()
+        for part in os.getenv("CORS_ORIGINS", "").split(",")
+        if part.strip()
+    ]
+    local_defaults = [
         "http://127.0.0.1:5173",
         "http://localhost:5173",
+        "http://127.0.0.1:5174",
+        "http://localhost:5174",
         "http://127.0.0.1:8086",
         "http://localhost:8086",
     ]
+
+    # Keep explicit config, but always allow common local origins for dev tools.
+    seen: set[str] = set()
+    merged: list[str] = []
+    for origin in configured + local_defaults:
+        if origin not in seen:
+            seen.add(origin)
+            merged.append(origin)
+    return merged
 
 
 def _api_base_url() -> str:
@@ -143,6 +163,21 @@ def _cookie_secure_flag() -> bool:
     if os.getenv("SESSION_COOKIE_SECURE", "").strip() == "":
         return _frontend_url().startswith("https://")
     return _SESSION_COOKIE_SECURE
+
+
+def _cookie_samesite_value() -> str:
+    if _SESSION_COOKIE_SAMESITE in {"lax", "strict", "none"}:
+        return _SESSION_COOKIE_SAMESITE
+
+    frontend_host = urlparse(_frontend_url()).hostname or ""
+    api_host = urlparse(_api_base_url()).hostname or ""
+
+    # Cross-site frontend/backend requires SameSite=None so credentials
+    # are included on fetch() requests between different domains.
+    if frontend_host and api_host and frontend_host != api_host:
+        return "none"
+
+    return "lax"
 
 
 def _sign_session_id(session_id: str) -> str:
@@ -210,7 +245,7 @@ def _set_session_cookie(response: RedirectResponse, session_id: str) -> None:
         value=_sign_session_id(session_id),
         httponly=True,
         max_age=_SESSION_TTL_SECONDS,
-        samesite="lax",
+        samesite=_cookie_samesite_value(),
         secure=_cookie_secure_flag(),
         domain=_SESSION_COOKIE_DOMAIN,
     )
@@ -222,6 +257,35 @@ def _github_headers(token: str) -> dict[str, str]:
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+
+
+def _history_db_connect():
+    if not _DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is required for history storage")
+    return psycopg.connect(_DATABASE_URL)
+
+
+def _init_history_store() -> None:
+    with _history_db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS diagnosis_history (
+                    id BIGSERIAL PRIMARY KEY,
+                    owner_key TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    classification_category TEXT NOT NULL,
+                    confidence DOUBLE PRECISION NOT NULL,
+                    diagnosis_preview TEXT NOT NULL,
+                    total_latency_ms INTEGER NOT NULL,
+                    full_result TEXT NOT NULL
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_diagnosis_history_owner_id ON diagnosis_history(owner_key, id DESC)"
+            )
+        conn.commit()
 
 
 def _load_workflow_template() -> str:
@@ -331,20 +395,89 @@ def _get_retriever(enable_rag: bool):
     return _shared_retriever
 
 
-def _append_history(response_data: DebugResponse) -> None:
-    global _history_counter
-    _history_counter += 1
-    _debug_history.append({
-        "id": _history_counter,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "classification_category": response_data.classification.get("category", "unknown"),
-        "confidence": response_data.confidence,
-        "diagnosis_preview": response_data.diagnosis[:200],
-        "total_latency_ms": response_data.total_latency_ms,
-        "full_result": response_data.model_dump() if hasattr(response_data, "model_dump") else None,
-    })
-    if len(_debug_history) > _HISTORY_LIMIT:
-        _debug_history.pop(0)
+def _get_history_owner_key(request: Request) -> str:
+    session = _get_session(request)
+    google_user = session.get("google_user") or {}
+    google_email = str(google_user.get("email", "")).strip().lower()
+    if google_email:
+        return f"google:{google_email}"
+
+    github_user = session.get("github_user") or {}
+    github_login = str(github_user.get("login", "")).strip().lower()
+    if github_login:
+        return f"github:{github_login}"
+
+    signed = request.cookies.get(_SESSION_COOKIE_NAME)
+    sid = _unsign_session_cookie(signed) if signed else None
+    if sid:
+        return f"session:{sid}"
+
+    return "anonymous"
+
+
+def _append_history(owner_key: str, response_data: DebugResponse) -> None:
+    payload = response_data.model_dump() if hasattr(response_data, "model_dump") else {}
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    with _history_db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO diagnosis_history (
+                    owner_key,
+                    timestamp,
+                    classification_category,
+                    confidence,
+                    diagnosis_preview,
+                    total_latency_ms,
+                    full_result
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    owner_key,
+                    timestamp,
+                    response_data.classification.get("category", "unknown"),
+                    response_data.confidence,
+                    response_data.diagnosis[:200],
+                    response_data.total_latency_ms,
+                    json.dumps(payload),
+                ),
+            )
+        conn.commit()
+
+
+def _load_history(owner_key: str) -> list[dict[str, Any]]:
+    with _history_db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, timestamp, classification_category, confidence,
+                       diagnosis_preview, total_latency_ms, full_result
+                FROM diagnosis_history
+                WHERE owner_key = %s
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (owner_key, _HISTORY_LIMIT),
+            )
+            rows = cur.fetchall()
+
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        full_result_raw = row[6]
+        try:
+            full_result = json.loads(full_result_raw) if full_result_raw else None
+        except json.JSONDecodeError:
+            full_result = None
+        results.append({
+            "id": row[0],
+            "timestamp": row[1],
+            "classification_category": row[2],
+            "confidence": row[3],
+            "diagnosis_preview": row[4],
+            "total_latency_ms": row[5],
+            "full_result": full_result,
+        })
+    return results
 
 
 # --- Lifespan ---
@@ -353,6 +486,7 @@ def _append_history(response_data: DebugResponse) -> None:
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
     logger.info("CI diagnosis API starting up...")
+    _init_history_store()
     _get_llm_client()
     _get_classifier()
     _get_preprocessor()
@@ -390,6 +524,17 @@ app.add_middleware(
 
 # --- Endpoints ---
 
+@app.get("/")
+async def root():
+    """Root endpoint for quick service discovery."""
+    return {
+        "name": "CI Failure Diagnosis API",
+        "status": "ok",
+        "health": "/api/health",
+        "docs": "/docs",
+    }
+
+
 @app.get("/api/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint."""
@@ -401,7 +546,7 @@ async def health_check():
 
 
 @app.post("/api/debug", response_model=DebugResponse)
-async def debug_log(request: DebugRequest):
+async def debug_log(request: Request, payload: DebugRequest):
     """Submit a CI/CD failure log for analysis.
 
     Runs the full Edge → Fog → Cloud debugging pipeline.
@@ -410,26 +555,26 @@ async def debug_log(request: DebugRequest):
         from src.cloud.agent import DebugAgent
         from src.ops.evaluator import Evaluator
 
-        # Initialize components
-        agent = DebugAgent(
-            llm_client=_get_llm_client(),
-            classifier=_get_classifier(),
-            retriever=_get_retriever(request.enable_rag),
-            preprocessor=_get_preprocessor(),
-            max_reasoning_steps=request.max_steps,
-            enable_self_critique=request.enable_self_critique,
-        )
+        def _run_debug_pipeline():
+            # Keep the heavy sync path off the event loop so health checks remain responsive.
+            agent = DebugAgent(
+                llm_client=_get_llm_client(),
+                classifier=_get_classifier(),
+                retriever=_get_retriever(payload.enable_rag),
+                preprocessor=_get_preprocessor(),
+                max_reasoning_steps=payload.max_steps,
+                enable_self_critique=payload.enable_self_critique,
+            )
+            result = agent.debug(payload.log_text, code_context=payload.code_context)
+            evaluator = Evaluator()
+            evaluation = evaluator.evaluate(
+                result.diagnosis,
+                result.classification.category,
+                result.total_latency_ms,
+            )
+            return result, evaluation
 
-        # Run the debugging pipeline
-        result = agent.debug(request.log_text, code_context=request.code_context)
-
-        # Evaluate the response
-        evaluator = Evaluator()
-        evaluation = evaluator.evaluate(
-            result.diagnosis,
-            result.classification.category,
-            result.total_latency_ms,
-        )
+        result, evaluation = await run_in_threadpool(_run_debug_pipeline)
 
         response_data = DebugResponse(
             classification=result.classification.to_dict(),
@@ -442,7 +587,8 @@ async def debug_log(request: DebugRequest):
             total_latency_ms=result.total_latency_ms,
         )
 
-        _append_history(response_data)
+        owner_key = _get_history_owner_key(request)
+        await run_in_threadpool(_append_history, owner_key, response_data)
 
         return response_data
 
@@ -452,11 +598,48 @@ async def debug_log(request: DebugRequest):
 
 
 @app.get("/api/history")
-async def get_history():
+async def get_history(request: Request):
     """Get past debug analysis history."""
+    owner_key = _get_history_owner_key(request)
     return {
-        "total": len(_debug_history),
-        "results": list(reversed(_debug_history)),  # Most recent first
+        "total": len(_load_history(owner_key)),
+        "results": _load_history(owner_key),
+    }
+
+
+@app.get("/api/history/{history_id}")
+async def get_history_item(request: Request, history_id: int):
+    owner_key = _get_history_owner_key(request)
+    with _history_db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, timestamp, classification_category, confidence,
+                       diagnosis_preview, total_latency_ms, full_result
+                FROM diagnosis_history
+                WHERE owner_key = %s AND id = %s
+                LIMIT 1
+                """,
+                (owner_key, history_id),
+            )
+            row = cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="History item not found")
+
+    try:
+        full_result = json.loads(row[6]) if row[6] else None
+    except json.JSONDecodeError:
+        full_result = None
+
+    return {
+        "id": row[0],
+        "timestamp": row[1],
+        "classification_category": row[2],
+        "confidence": row[3],
+        "diagnosis_preview": row[4],
+        "total_latency_ms": row[5],
+        "full_result": full_result,
     }
 
 
@@ -484,7 +667,7 @@ async def get_auth_session(request: Request, response: Response):
             value=_sign_session_id(sid),
             httponly=True,
             max_age=_SESSION_TTL_SECONDS,
-            samesite="lax",
+            samesite=_cookie_samesite_value(),
             secure=_cookie_secure_flag(),
             domain=_SESSION_COOKIE_DOMAIN,
         )

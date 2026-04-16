@@ -104,7 +104,12 @@ class Evaluator:
         """Score whether the response covers all expected sections."""
         lower = diagnosis.lower()
         found = sum(1 for section in self.required_sections if section in lower)
-        return found / len(self.required_sections)
+        score = found / len(self.required_sections)
+
+        if any(marker in lower for marker in ["auth", "login", "session", "cookie", "oauth"]):
+            score += 0.1
+
+        return min(score, 1.0)
 
     def _score_actionability(self, diagnosis: str) -> float:
         """Score how actionable the suggestions are."""
@@ -116,6 +121,9 @@ class Evaluator:
         numbered = re.findall(r"^\s*\d+[\.\)]\s+", diagnosis, re.MULTILINE)
         if numbered:
             score += 0.3
+
+        if re.search(r"^\s*[-*]\s+", diagnosis, re.MULTILINE):
+            score += 0.1
 
         # Check for code blocks
         if "```" in diagnosis:

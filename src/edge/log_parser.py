@@ -99,10 +99,13 @@ PATTERNS = {
     "secrets": [
         re.compile(r"(?i)(Input required and not supplied: token|Permission denied \(publickey\)|token expired)\s*(.*)"),
         re.compile(r"(?i)(secret .+ not available|\.env file not loaded|Vault)\s*(.*)"),
+        re.compile(r"(?i)(Secret\s+[A-Z0-9_]+\s+is required, but not provided while calling)\s*(.*)"),
+        re.compile(r"(?i)(required, but not provided while calling)\s*(.*)"),
     ],
     "cicd_platform": [
         re.compile(r"(?i)(Invalid workflow file|Resource not accessible by integration|Pipeline filtered out)\s*(.*)"),
         re.compile(r"(?i)(This job is stuck because the project doesn't have any runners|artifact upload)\s*(.*)"),
+        re.compile(r"(?i)(workflow_call|actions: none|issues: none|caller workflow|reusable workflow)\s*(.*)"),
     ],
 }
 

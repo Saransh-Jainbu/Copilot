@@ -40,7 +40,9 @@ on:
         type: string
     secrets:
       HUGGINGFACE_API_TOKEN:
-        required: true
+        required: false
+      DATABASE_URL:
+        required: false
 
 permissions:
   contents: read
@@ -88,9 +90,14 @@ jobs:
         shell: bash
         env:
           HUGGINGFACE_API_TOKEN: ${{ secrets.HUGGINGFACE_API_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           if [ -z "${HUGGINGFACE_API_TOKEN}" ]; then
             echo "::error::HUGGINGFACE_API_TOKEN is missing. Add it to caller repository secrets."
+            exit 1
+          fi
+          if [ -z "${DATABASE_URL}" ]; then
+            echo "::error::DATABASE_URL is missing. Add it to caller repository secrets."
             exit 1
           fi
 
@@ -99,6 +106,7 @@ jobs:
         shell: bash
         env:
           HUGGINGFACE_API_TOKEN: ${{ secrets.HUGGINGFACE_API_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           echo "Starting diagnosis API on port ${{ inputs['api-port'] }}"
           python -m uvicorn src.api.main:app --app-dir .diagnoser --host 127.0.0.1 --port ${{ inputs['api-port'] }} > api.log 2>&1 &

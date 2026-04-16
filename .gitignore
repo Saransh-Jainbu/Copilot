@@ -15,7 +15,8 @@ env/
 
 # Environment variables
 .env
-
+.env.production.example
+.env.production.example
 # Data (large files)
 data/raw_logs/
 data/faiss_index/*.faiss
@@ -43,3 +44,4 @@ Thumbs.db
 # Coverage
 htmlcov/
 .coverage
+.env.production.example

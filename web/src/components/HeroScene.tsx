@@ -15,7 +15,7 @@ function HeroScene({ className }: HeroSceneProps) {
     }
 
     const scene = new THREE.Scene()
-    scene.fog = new THREE.FogExp2(0x020617, 0.036)
+    scene.fog = new THREE.FogExp2(0x050505, 0.045)
 
     const camera = new THREE.PerspectiveCamera(54, mount.clientWidth / mount.clientHeight, 0.1, 100)
     camera.position.set(0, 0.4, 6.2)
@@ -32,14 +32,14 @@ function HeroScene({ className }: HeroSceneProps) {
     const coreGlobe = new THREE.Mesh(
       new THREE.SphereGeometry(1.3, 36, 36),
       new THREE.MeshStandardMaterial({
-        color: 0x60a5fa,
+        color: 0xf5f5f5,
         wireframe: true,
         transparent: true,
-        opacity: 0.28,
-        emissive: 0x0f172a,
-        emissiveIntensity: 0.7,
-        roughness: 0.38,
-        metalness: 0.25,
+        opacity: 0.24,
+        emissive: 0x101010,
+        emissiveIntensity: 0.5,
+        roughness: 0.46,
+        metalness: 0.18,
       }),
     )
     group.add(coreGlobe)
@@ -47,9 +47,9 @@ function HeroScene({ className }: HeroSceneProps) {
     const orbitRing = new THREE.Mesh(
       new THREE.TorusGeometry(1.95, 0.025, 14, 96),
       new THREE.MeshBasicMaterial({
-        color: 0x22d3ee,
+        color: 0xf59e0b,
         transparent: true,
-        opacity: 0.65,
+        opacity: 0.58,
       }),
     )
     orbitRing.rotation.x = Math.PI * 0.35
@@ -58,11 +58,11 @@ function HeroScene({ className }: HeroSceneProps) {
 
     const plateGeometry = new THREE.BoxGeometry(0.8, 0.06, 0.38)
     const plateMaterial = new THREE.MeshStandardMaterial({
-      color: 0x94a3b8,
-      metalness: 0.42,
-      roughness: 0.35,
-      emissive: 0x0c4a6e,
-      emissiveIntensity: 0.35,
+      color: 0xa3a3a3,
+      metalness: 0.52,
+      roughness: 0.34,
+      emissive: 0x1c1917,
+      emissiveIntensity: 0.28,
     })
 
     const codePlates: THREE.Mesh[] = []
@@ -93,10 +93,10 @@ function HeroScene({ className }: HeroSceneProps) {
     const nodes = new THREE.Points(
       nodesGeometry,
       new THREE.PointsMaterial({
-        color: 0x67e8f9,
+        color: 0x22c55e,
         size: 0.035,
         transparent: true,
-        opacity: 0.95,
+        opacity: 0.88,
       }),
     )
     group.add(nodes)
@@ -115,9 +115,9 @@ function HeroScene({ className }: HeroSceneProps) {
     const links = new THREE.LineSegments(
       linksGeometry,
       new THREE.LineBasicMaterial({
-        color: 0x38bdf8,
+        color: 0xf59e0b,
         transparent: true,
-        opacity: 0.2,
+        opacity: 0.16,
       }),
     )
     group.add(links)
@@ -142,23 +142,23 @@ function HeroScene({ className }: HeroSceneProps) {
     const particles = new THREE.Points(
       particlesGeometry,
       new THREE.PointsMaterial({
-        color: 0x93c5fd,
+        color: 0xd4d4d8,
         size: 0.02,
         transparent: true,
-        opacity: 0.55,
+        opacity: 0.38,
       }),
     )
     scene.add(particles)
 
-    const keyLight = new THREE.DirectionalLight(0xe0f2fe, 1.5)
+    const keyLight = new THREE.DirectionalLight(0xf8fafc, 1.25)
     keyLight.position.set(2.6, 2.8, 2.2)
     scene.add(keyLight)
 
-    const fillLight = new THREE.DirectionalLight(0x60a5fa, 0.8)
+    const fillLight = new THREE.DirectionalLight(0x22c55e, 0.65)
     fillLight.position.set(-3.2, -1.1, -2)
     scene.add(fillLight)
 
-    const rimLight = new THREE.PointLight(0x22d3ee, 1.4, 20)
+    const rimLight = new THREE.PointLight(0xf59e0b, 1.45, 20)
     rimLight.position.set(0, 0.2, 4.2)
     scene.add(rimLight)
 

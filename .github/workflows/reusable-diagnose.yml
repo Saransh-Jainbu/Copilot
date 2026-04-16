@@ -40,7 +40,7 @@ on:
         type: string
     secrets:
       HUGGINGFACE_API_TOKEN:
-        required: true
+        required: false
 
 permissions:
   contents: read

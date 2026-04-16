@@ -262,8 +262,11 @@ How to onboard another repository:
 1. Add a workflow in target repo using templates/github/one-click-diagnosis.yml
 2. Replace placeholder owner/repo with toolkit repository
 3. Ensure CI uploads artifact named test-results (or update inputs)
-4. Add HUGGINGFACE_API_TOKEN to target repo secrets
-5. Trigger a failing CI run once to validate diagnosis comment flow
+4. Provide HUGGINGFACE_API_TOKEN in each target repo secret, or as an organization secret shared to selected repositories
+5. Keep `secrets: inherit` in the caller workflow so the reusable workflow receives caller secrets
+6. Trigger a failing CI run once to validate diagnosis comment flow
+
+If the token is missing, the reusable workflow now fails at runtime with a clear message instead of failing YAML evaluation at call time.
 
 ## Code-Aware Diagnosis Flow
 

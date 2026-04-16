@@ -417,6 +417,34 @@ function ConsolePage() {
     }
   }
 
+  function isLikelyNetworkError(err: unknown) {
+    if (!(err instanceof Error)) {
+      return false
+    }
+
+    return err.name === 'TypeError' || /failed to fetch|networkerror|load failed/i.test(err.message)
+  }
+
+  async function requestDiagnosis() {
+    const res = await fetch(`${apiUrl}/api/debug`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        log_text: logText,
+        enable_rag: enableRag,
+        enable_self_critique: enableSelfCritique,
+        max_steps: maxSteps,
+      }),
+    })
+
+    if (!res.ok) {
+      throw new Error(`API ${res.status}: ${await res.text()}`)
+    }
+
+    return res.json() as Promise<DebugResponse>
+  }
+
   async function handleAnalyze(event: FormEvent) {
     event.preventDefault()
     setLoading(true)
@@ -424,23 +452,30 @@ function ConsolePage() {
     setResult(null)
 
     try {
-      const res = await fetch(`${apiUrl}/api/debug`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          log_text: logText,
-          enable_rag: enableRag,
-          enable_self_critique: enableSelfCritique,
-          max_steps: maxSteps,
-        }),
-      })
+      let payload: DebugResponse
 
-      if (!res.ok) {
-        throw new Error(`API ${res.status}: ${await res.text()}`)
+      try {
+        payload = await requestDiagnosis()
+      } catch (firstErr) {
+        if (!isLikelyNetworkError(firstErr)) {
+          throw firstErr
+        }
+
+        await autoDetectBackendUrl()
+        await new Promise<void>((resolve) => {
+          window.setTimeout(() => resolve(), 1200)
+        })
+
+        try {
+          payload = await requestDiagnosis()
+        } catch (secondErr) {
+          if (isLikelyNetworkError(secondErr)) {
+            throw new Error('Network request failed while contacting the backend. The service may be restarting or warming up. Please retry in a few seconds.')
+          }
+          throw secondErr
+        }
       }
 
-      const payload: DebugResponse = await res.json()
       setResult(payload)
       await loadHistory()
     } catch (err) {

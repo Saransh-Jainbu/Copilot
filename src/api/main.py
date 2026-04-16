@@ -123,15 +123,28 @@ if not _SESSION_SECRET:
 
 
 def _allowed_origins() -> list[str]:
-    raw = os.getenv("CORS_ORIGINS", "")
-    if raw.strip():
-        return [part.strip() for part in raw.split(",") if part.strip()]
-    return [
+    configured = [
+        part.strip()
+        for part in os.getenv("CORS_ORIGINS", "").split(",")
+        if part.strip()
+    ]
+    local_defaults = [
         "http://127.0.0.1:5173",
         "http://localhost:5173",
+        "http://127.0.0.1:5174",
+        "http://localhost:5174",
         "http://127.0.0.1:8086",
         "http://localhost:8086",
     ]
+
+    # Keep explicit config, but always allow common local origins for dev tools.
+    seen: set[str] = set()
+    merged: list[str] = []
+    for origin in configured + local_defaults:
+        if origin not in seen:
+            seen.add(origin)
+            merged.append(origin)
+    return merged
 
 
 def _api_base_url() -> str:

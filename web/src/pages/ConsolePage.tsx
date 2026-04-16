@@ -155,6 +155,8 @@ function ConsolePage() {
   const [view, setView] = useState<View>('repo')
   const [apiUrl, setApiUrl] = useState(() => normalizeLocalApiUrl(localStorage.getItem('copilot-api-url') || getDefaultApiUrl()))
   const [logText, setLogText] = useState(SAMPLE_LOG)
+  const [analyzeTarget, setAnalyzeTarget] = useState<'render' | 'local'>('render')
+  const [localAnalyzeUrl, setLocalAnalyzeUrl] = useState(() => normalizeLocalApiUrl('http://127.0.0.1:8086'))
   const [enableRag, setEnableRag] = useState(true)
   const [enableSelfCritique, setEnableSelfCritique] = useState(true)
   const [maxSteps, setMaxSteps] = useState(5)
@@ -417,6 +419,37 @@ function ConsolePage() {
     }
   }
 
+  async function detectLocalAnalyzeUrl() {
+    const candidates = [
+      localAnalyzeUrl,
+      'http://127.0.0.1:8086',
+      'http://localhost:8086',
+      'http://127.0.0.1:8092',
+      'http://localhost:8092',
+      'http://127.0.0.1:8000',
+      'http://localhost:8000',
+    ].map(normalizeLocalApiUrl).filter(Boolean)
+
+    const seen = new Set<string>()
+    const uniqueCandidates = candidates.filter((url) => {
+      if (seen.has(url)) {
+        return false
+      }
+      seen.add(url)
+      return true
+    })
+
+    for (const candidate of uniqueCandidates) {
+      const ok = await isHealthy(candidate)
+      if (ok) {
+        setLocalAnalyzeUrl(candidate)
+        return candidate
+      }
+    }
+
+    return null
+  }
+
   function isLikelyNetworkError(err: unknown) {
     if (!(err instanceof Error)) {
       return false
@@ -425,8 +458,8 @@ function ConsolePage() {
     return err.name === 'TypeError' || /failed to fetch|networkerror|load failed/i.test(err.message)
   }
 
-  async function requestDiagnosis() {
-    const res = await fetch(`${apiUrl}/api/debug`, {
+  async function requestDiagnosis(targetApiUrl: string) {
+    const res = await fetch(`${targetApiUrl}/api/debug`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -453,21 +486,35 @@ function ConsolePage() {
 
     try {
       let payload: DebugResponse
+      const useLocalTarget = analyzeTarget === 'local'
+      const targetApiUrl = useLocalTarget ? normalizeLocalApiUrl(localAnalyzeUrl) : apiUrl
+
+      if (!targetApiUrl) {
+        throw new Error(useLocalTarget ? 'Set a local backend URL first.' : 'Set a backend URL first.')
+      }
+
+      const healthy = await isHealthy(targetApiUrl)
+      if (!healthy) {
+        throw new Error(
+          useLocalTarget
+            ? 'Selected local backend is not reachable. Start it first or change the local URL.'
+            : 'Selected Render backend is not reachable. Check the URL or switch target manually.',
+        )
+      }
 
       try {
-        payload = await requestDiagnosis()
+        payload = await requestDiagnosis(targetApiUrl)
       } catch (firstErr) {
         if (!isLikelyNetworkError(firstErr)) {
           throw firstErr
         }
 
-        await autoDetectBackendUrl()
         await new Promise<void>((resolve) => {
           window.setTimeout(() => resolve(), 1200)
         })
 
         try {
-          payload = await requestDiagnosis()
+          payload = await requestDiagnosis(targetApiUrl)
         } catch (secondErr) {
           if (isLikelyNetworkError(secondErr)) {
             throw new Error('Network request failed while contacting the backend. The service may be restarting or warming up. Please retry in a few seconds.')
@@ -477,7 +524,9 @@ function ConsolePage() {
       }
 
       setResult(payload)
-      await loadHistory()
+      if (!useLocalTarget) {
+        await loadHistory()
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to analyze log'
       setError(message)
@@ -878,11 +927,56 @@ function ConsolePage() {
               <form className="grid content-start gap-3" onSubmit={handleAnalyze}>
                 <div className="flex items-center justify-between">
                   <h2 className="text-xl font-semibold">Analyze Pipeline Error</h2>
-                  <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-zinc-300">Agent Mode</span>
+                  <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-zinc-300">
+                    {analyzeTarget === 'local' ? 'Local Mode' : 'Render Mode'}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                  <p className="mb-2 text-xs uppercase tracking-[0.12em] text-zinc-400">Analyze target</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className={`rounded-lg border px-3 py-2 text-xs font-semibold transition ${analyzeTarget === 'render'
+                        ? 'border-lime-300/35 bg-lime-300/10 text-lime-100'
+                        : 'border-white/15 bg-white/5 text-zinc-300 hover:border-white/30 hover:text-zinc-100'}`}
+                      onClick={() => setAnalyzeTarget('render')}
+                    >
+                      Use Render backend
+                    </button>
+                    <button
+                      type="button"
+                      className={`rounded-lg border px-3 py-2 text-xs font-semibold transition ${analyzeTarget === 'local'
+                        ? 'border-amber-300/35 bg-amber-300/10 text-amber-100'
+                        : 'border-white/15 bg-white/5 text-zinc-300 hover:border-white/30 hover:text-zinc-100'}`}
+                      onClick={() => setAnalyzeTarget('local')}
+                    >
+                      Use local backend
+                    </button>
+                    {analyzeTarget === 'local' && (
+                      <button
+                        type="button"
+                        className="rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:border-amber-300/30 hover:bg-amber-300/10"
+                        onClick={() => void detectLocalAnalyzeUrl()}
+                      >
+                        Auto-detect local
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <label htmlFor="api-url" className="text-sm text-zinc-400">Backend URL</label>
-                <input id="api-url" className="rounded-xl border border-white/15 bg-zinc-950 px-3 py-2" value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} />
+                {analyzeTarget === 'render' ? (
+                  <input id="api-url" className="rounded-xl border border-white/15 bg-zinc-950 px-3 py-2" value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} />
+                ) : (
+                  <input
+                    id="api-url"
+                    className="rounded-xl border border-amber-300/25 bg-zinc-950 px-3 py-2"
+                    value={localAnalyzeUrl}
+                    onChange={(e) => setLocalAnalyzeUrl(normalizeLocalApiUrl(e.target.value))}
+                    placeholder="http://127.0.0.1:8086"
+                  />
+                )}
 
                 <label htmlFor="log-input" className="text-sm text-zinc-400">Failure Log</label>
                 <textarea

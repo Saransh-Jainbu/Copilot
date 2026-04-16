@@ -21,6 +21,7 @@ from urllib.parse import urlencode, urlparse
 from dotenv import load_dotenv
 import requests
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
@@ -541,26 +542,26 @@ async def debug_log(request: Request, payload: DebugRequest):
         from src.cloud.agent import DebugAgent
         from src.ops.evaluator import Evaluator
 
-        # Initialize components
-        agent = DebugAgent(
-            llm_client=_get_llm_client(),
-            classifier=_get_classifier(),
-            retriever=_get_retriever(payload.enable_rag),
-            preprocessor=_get_preprocessor(),
-            max_reasoning_steps=payload.max_steps,
-            enable_self_critique=payload.enable_self_critique,
-        )
+        def _run_debug_pipeline():
+            # Keep the heavy sync path off the event loop so health checks remain responsive.
+            agent = DebugAgent(
+                llm_client=_get_llm_client(),
+                classifier=_get_classifier(),
+                retriever=_get_retriever(payload.enable_rag),
+                preprocessor=_get_preprocessor(),
+                max_reasoning_steps=payload.max_steps,
+                enable_self_critique=payload.enable_self_critique,
+            )
+            result = agent.debug(payload.log_text, code_context=payload.code_context)
+            evaluator = Evaluator()
+            evaluation = evaluator.evaluate(
+                result.diagnosis,
+                result.classification.category,
+                result.total_latency_ms,
+            )
+            return result, evaluation
 
-        # Run the debugging pipeline
-        result = agent.debug(payload.log_text, code_context=payload.code_context)
-
-        # Evaluate the response
-        evaluator = Evaluator()
-        evaluation = evaluator.evaluate(
-            result.diagnosis,
-            result.classification.category,
-            result.total_latency_ms,
-        )
+        result, evaluation = await run_in_threadpool(_run_debug_pipeline)
 
         response_data = DebugResponse(
             classification=result.classification.to_dict(),
@@ -573,7 +574,8 @@ async def debug_log(request: Request, payload: DebugRequest):
             total_latency_ms=result.total_latency_ms,
         )
 
-        _append_history(_get_history_owner_key(request), response_data)
+        owner_key = _get_history_owner_key(request)
+        await run_in_threadpool(_append_history, owner_key, response_data)
 
         return response_data
 
